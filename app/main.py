@@ -11,6 +11,7 @@ from .db import engine, get_session
 from .models import Artist, Album, Song, Playlist, PlaylistSong, Comparison, init_db
 from .glicko import update_pair
 from .pair_selector import pick_pair
+from .scoring import album_scores, artist_scores, star_tier
 
 app = FastAPI(title="Music Ranker")
 
@@ -86,9 +87,66 @@ def songs_list(
             .filter((Song.title.ilike(like)) | (Album.title.ilike(like)) | (Artist.name.ilike(like)))
         )
     songs = query.order_by(Song.glicko_rating.desc()).limit(limit).all()
+    songs_with_stars = [(s, star_tier(s.glicko_rating, s.glicko_rd)) for s in songs]
     return templates.TemplateResponse(
-        request, "songs.html", {"songs": songs, "q": q or "", "limit": limit}
+        request, "songs.html",
+        {"songs_with_stars": songs_with_stars, "q": q or "", "limit": limit},
     )
+
+
+@app.get("/albums", response_class=HTMLResponse)
+def albums_page(request: Request, db: Session = Depends(get_session)):
+    return templates.TemplateResponse(
+        request, "albums.html", {"albums": album_scores(db)}
+    )
+
+
+@app.get("/artists", response_class=HTMLResponse)
+def artists_page(request: Request, db: Session = Depends(get_session)):
+    return templates.TemplateResponse(
+        request, "artists.html", {"artists": artist_scores(db)}
+    )
+
+
+# ---------- Gender / band prompt queue ----------
+
+@app.get("/api/next-artist-prompt")
+def next_artist_prompt(db: Session = Depends(get_session)):
+    """Return one artist that still needs gender/band metadata, prioritizing
+    artists with songs in playlists."""
+    artist = (
+        db.query(Artist)
+        .join(Album, Album.artist_id == Artist.id)
+        .join(Song, Song.album_id == Album.id)
+        .join(PlaylistSong, PlaylistSong.song_id == Song.id)
+        .filter(Artist.gender.is_(None))
+        .distinct()
+        .first()
+    )
+    if artist is None:
+        # fall back to any artist without gender set
+        artist = db.query(Artist).filter(Artist.gender.is_(None)).first()
+    if artist is None:
+        return {"artist": None}
+    return {"artist": {"id": artist.id, "name": artist.name}}
+
+
+class ArtistMetaBody(BaseModel):
+    artist_id: int
+    gender: str  # M, F, NB, Band, Unknown
+
+
+@app.post("/api/artist-meta")
+def set_artist_meta(body: ArtistMetaBody, db: Session = Depends(get_session)):
+    artist = db.get(Artist, body.artist_id)
+    if artist is None:
+        raise HTTPException(404, "artist not found")
+    if body.gender not in ("M", "F", "NB", "Band", "Unknown"):
+        raise HTTPException(400, "invalid gender value")
+    artist.gender = body.gender
+    artist.is_band = body.gender == "Band"
+    db.commit()
+    return {"ok": True}
 
 
 # ---------- Comparisons ----------

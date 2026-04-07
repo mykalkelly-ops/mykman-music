@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Albums</h1>
+<p style="color:#888">Derived from song ratings. Unliked songs pull the album down. Score is on Glicko scale (~1500 average).</p>
+<table>
+  <thead><tr><th>#</th><th>Album</th><th>Artist</th><th>Score</th><th>Liked / Total</th><th>Avg RD</th></tr></thead>
+  <tbody>
+  {% for a in albums %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>{{ a.title }}</td>
+      <td>{{ a.artist_name }}</td>
+      <td>{{ "%.0f"|format(a.score) }}</td>
+      <td>{{ a.liked_count }} / {{ a.song_count }}</td>
+      <td>{{ "%.0f"|format(a.avg_rd) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

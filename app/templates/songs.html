@@ -7,11 +7,12 @@
 </form>
 <p>Showing {{ songs|length }} (limit {{ limit }}), sorted by current rating.</p>
 <table>
-  <thead><tr><th>#</th><th>Title</th><th>Artist</th><th>Album</th><th>Rating</th><th>RD</th><th>Cmps</th></tr></thead>
+  <thead><tr><th>#</th><th>Stars</th><th>Title</th><th>Artist</th><th>Album</th><th>Rating</th><th>RD</th><th>Cmps</th></tr></thead>
   <tbody>
-    {% for s in songs %}
+    {% for s, stars in songs_with_stars %}
     <tr>
       <td>{{ loop.index }}</td>
+      <td>{% if stars %}{{ "*" * stars }}{% else %}<span style="color:#555">—</span>{% endif %}</td>
       <td>{{ s.title }}</td>
       <td>{{ s.album.artist.name }}</td>
       <td>{{ s.album.title }}</td>

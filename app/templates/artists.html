@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Artists</h1>
+<p style="color:#888">Weighted average of album scores. More liked songs = higher.</p>
+<table>
+  <thead><tr><th>#</th><th>Artist</th><th>Score</th><th>Albums</th><th>Liked / Total Songs</th></tr></thead>
+  <tbody>
+  {% for a in artists %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>{{ a.name }}</td>
+      <td>{{ "%.0f"|format(a.score) }}</td>
+      <td>{{ a.album_count }}</td>
+      <td>{{ a.liked_songs }} / {{ a.total_songs }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
