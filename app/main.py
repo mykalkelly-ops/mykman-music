@@ -1,13 +1,16 @@
 from pathlib import Path
 
-from fastapi import FastAPI, Depends, Request, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Depends, Request, Query, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from .db import engine, get_session
-from .models import Artist, Album, Song, Playlist, PlaylistSong, init_db
+from .models import Artist, Album, Song, Playlist, PlaylistSong, Comparison, init_db
+from .glicko import update_pair
+from .pair_selector import pick_pair
 
 app = FastAPI(title="Music Ranker")
 
@@ -88,3 +91,79 @@ def songs_list(
         "songs.html",
         {"request": request, "songs": songs, "q": q or "", "limit": limit},
     )
+
+
+# ---------- Comparisons ----------
+
+def _song_payload(s: Song) -> dict:
+    return {
+        "id": s.id,
+        "title": s.title,
+        "album": s.album.title if s.album else None,
+        "artist": s.album.artist.name if s.album and s.album.artist else None,
+        "year": s.album.year if s.album else None,
+        "genre": s.album.genre if s.album else None,
+        "rating": round(s.glicko_rating, 1),
+        "rd": round(s.glicko_rd, 1),
+        "comparison_count": s.comparison_count,
+    }
+
+
+@app.get("/compare", response_class=HTMLResponse)
+def compare_page(request: Request):
+    return templates.TemplateResponse("compare.html", {"request": request})
+
+
+@app.get("/api/next-pair")
+def next_pair(db: Session = Depends(get_session)):
+    pair = pick_pair(db)
+    if pair is None:
+        return JSONResponse({"error": "not enough songs"}, status_code=404)
+    a, b = pair
+    total_comparisons = db.query(func.count(Comparison.id)).scalar() or 0
+    return {
+        "a": _song_payload(a),
+        "b": _song_payload(b),
+        "total_comparisons": total_comparisons,
+    }
+
+
+class CompareBody(BaseModel):
+    song_a_id: int
+    song_b_id: int
+    winner_id: int | None  # null = skip/tie
+
+
+@app.post("/api/compare")
+def submit_comparison(body: CompareBody, db: Session = Depends(get_session)):
+    a = db.get(Song, body.song_a_id)
+    b = db.get(Song, body.song_b_id)
+    if a is None or b is None:
+        raise HTTPException(404, "song not found")
+    if body.winner_id not in (a.id, b.id, None):
+        raise HTTPException(400, "winner must be one of the two songs or null")
+
+    if body.winner_id is None:
+        score_a = 0.5
+    elif body.winner_id == a.id:
+        score_a = 1.0
+    else:
+        score_a = 0.0
+
+    (a_rating, a_rd, a_vol), (b_rating, b_rd, b_vol) = update_pair(
+        a.glicko_rating, a.glicko_rd, a.glicko_vol,
+        b.glicko_rating, b.glicko_rd, b.glicko_vol,
+        score_a,
+    )
+    a.glicko_rating, a.glicko_rd, a.glicko_vol = a_rating, a_rd, a_vol
+    b.glicko_rating, b.glicko_rd, b.glicko_vol = b_rating, b_rd, b_vol
+    a.comparison_count = (a.comparison_count or 0) + 1
+    b.comparison_count = (b.comparison_count or 0) + 1
+
+    db.add(Comparison(song_a_id=a.id, song_b_id=b.id, winner_id=body.winner_id))
+    db.commit()
+
+    return {
+        "a": _song_payload(a),
+        "b": _song_payload(b),
+    }

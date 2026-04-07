@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Which do you like more?</h1>
+<p id="count" style="color:#888"></p>
+
+<div id="pair" style="display:flex; gap:1rem; margin-top:1.5rem;">
+  <div class="card" data-side="a" style="flex:1; padding:1.5rem; background:#1a1a1a; border-radius:8px; cursor:pointer; border:2px solid transparent;">
+    <div style="font-size:1.3rem; font-weight:600;" id="a-title">—</div>
+    <div style="color:#aaa;" id="a-artist"></div>
+    <div style="color:#666; font-size:0.85rem; margin-top:0.5rem;" id="a-meta"></div>
+  </div>
+  <div class="card" data-side="b" style="flex:1; padding:1.5rem; background:#1a1a1a; border-radius:8px; cursor:pointer; border:2px solid transparent;">
+    <div style="font-size:1.3rem; font-weight:600;" id="b-title">—</div>
+    <div style="color:#aaa;" id="b-artist"></div>
+    <div style="color:#666; font-size:0.85rem; margin-top:0.5rem;" id="b-meta"></div>
+  </div>
+</div>
+
+<div style="margin-top:1.5rem; display:flex; gap:0.5rem;">
+  <button id="skip">Skip (space)</button>
+  <button id="tie">Tie</button>
+</div>
+<p style="color:#666; font-size:0.8rem; margin-top:1rem;">Keys: ← = left, → = right, space = skip</p>
+
+<script>
+let current = null;
+
+async function load() {
+  const r = await fetch('/api/next-pair');
+  if (!r.ok) { document.getElementById('pair').innerHTML = 'No songs yet. Import or seed first.'; return; }
+  current = await r.json();
+  document.getElementById('count').textContent = `${current.total_comparisons} comparisons so far`;
+  render('a', current.a);
+  render('b', current.b);
+  for (const c of document.querySelectorAll('.card')) c.style.borderColor = 'transparent';
+}
+
+function render(side, s) {
+  document.getElementById(side+'-title').textContent = s.title;
+  document.getElementById(side+'-artist').textContent = s.artist || '';
+  document.getElementById(side+'-meta').textContent =
+    `${s.album || ''} ${s.year ? '· '+s.year : ''} ${s.genre ? '· '+s.genre : ''} · ${s.rating} (RD ${s.rd}, ${s.comparison_count} cmps)`;
+}
+
+async function submit(winnerId) {
+  if (!current) return;
+  const body = { song_a_id: current.a.id, song_b_id: current.b.id, winner_id: winnerId };
+  await fetch('/api/compare', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  await load();
+}
+
+document.querySelector('[data-side=a]').onclick = () => submit(current.a.id);
+document.querySelector('[data-side=b]').onclick = () => submit(current.b.id);
+document.getElementById('skip').onclick = () => submit(null);
+document.getElementById('tie').onclick = () => submit(null);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') submit(current.a.id);
+  else if (e.key === 'ArrowRight') submit(current.b.id);
+  else if (e.key === ' ') { e.preventDefault(); submit(null); }
+});
+
+load();
+</script>
+{% endblock %}
