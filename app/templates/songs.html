@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Songs</h1>
+<form method="get" action="/songs">
+  <input type="text" name="q" value="{{ q }}" placeholder="search title / album / artist">
+  <button type="submit">Search</button>
+</form>
+<p>Showing {{ songs|length }} (limit {{ limit }}), sorted by current rating.</p>
+<table>
+  <thead><tr><th>#</th><th>Title</th><th>Artist</th><th>Album</th><th>Rating</th><th>RD</th><th>Cmps</th></tr></thead>
+  <tbody>
+    {% for s in songs %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>{{ s.title }}</td>
+      <td>{{ s.album.artist.name }}</td>
+      <td>{{ s.album.title }}</td>
+      <td>{{ "%.0f"|format(s.glicko_rating) }}</td>
+      <td>{{ "%.0f"|format(s.glicko_rd) }}</td>
+      <td>{{ s.comparison_count }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

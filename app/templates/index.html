@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Library</h1>
+<div>
+  <div class="stat"><div class="num">{{ total_songs }}</div><div class="label">Songs</div></div>
+  <div class="stat"><div class="num">{{ total_artists }}</div><div class="label">Artists</div></div>
+  <div class="stat"><div class="num">{{ total_albums }}</div><div class="label">Albums</div></div>
+  <div class="stat"><div class="num">{{ total_playlists }}</div><div class="label">Monthly Playlists</div></div>
+  <div class="stat"><div class="num">{{ total_playlist_songs }}</div><div class="label">Playlist Entries</div></div>
+</div>
+
+<h2>Monthly Playlists</h2>
+{% if playlists %}
+<table>
+  <thead><tr><th>Name</th><th>Year</th><th>Month</th></tr></thead>
+  <tbody>
+    {% for p in playlists %}
+    <tr>
+      <td><a href="/playlists/{{ p.id }}">{{ p.name }}</a></td>
+      <td>{{ p.year or "" }}</td>
+      <td>{{ p.month or "" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No playlists imported yet. Run the importer with your Library.xml:</p>
+<pre>.venv\Scripts\python -m app.importer path\to\Library.xml</pre>
+{% endif %}
+{% endblock %}

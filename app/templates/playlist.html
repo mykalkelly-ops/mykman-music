@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ playlist.name }}</h1>
+<p>{{ rows|length }} songs</p>
+<table>
+  <thead><tr><th>Title</th><th>Artist</th><th>Album</th><th>Year</th><th>Genre</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.song.title }}</td>
+      <td>{{ r.song.album.artist.name }}</td>
+      <td>{{ r.song.album.title }}</td>
+      <td>{{ r.song.album.year or "" }}</td>
+      <td>{{ r.song.album.genre or "" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
