@@ -38,9 +38,9 @@ def index(request: Request, db: Session = Depends(get_session)):
     )
 
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "total_songs": total_songs,
             "total_artists": total_artists,
             "total_albums": total_albums,
@@ -64,8 +64,7 @@ def playlist_detail(playlist_id: int, request: Request, db: Session = Depends(ge
         .all()
     )
     return templates.TemplateResponse(
-        "playlist.html",
-        {"request": request, "playlist": playlist, "rows": rows},
+        request, "playlist.html", {"playlist": playlist, "rows": rows}
     )
 
 
@@ -88,8 +87,7 @@ def songs_list(
         )
     songs = query.order_by(Song.glicko_rating.desc()).limit(limit).all()
     return templates.TemplateResponse(
-        "songs.html",
-        {"request": request, "songs": songs, "q": q or "", "limit": limit},
+        request, "songs.html", {"songs": songs, "q": q or "", "limit": limit}
     )
 
 
@@ -111,7 +109,7 @@ def _song_payload(s: Song) -> dict:
 
 @app.get("/compare", response_class=HTMLResponse)
 def compare_page(request: Request):
-    return templates.TemplateResponse("compare.html", {"request": request})
+    return templates.TemplateResponse(request, "compare.html", {})
 
 
 @app.get("/api/next-pair")
