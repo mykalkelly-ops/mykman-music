@@ -11,6 +11,7 @@ from .db import engine, get_session
 from .models import Artist, Album, Song, Playlist, PlaylistSong, Comparison, init_db
 from .glicko import update_pair
 from .pair_selector import pick_pair
+from .placement import update_bounds, maybe_finalize
 from .scoring import album_scores, artist_scores, star_tier
 
 app = FastAPI(title="Music Ranker")
@@ -215,6 +216,17 @@ def submit_comparison(body: CompareBody, db: Session = Depends(get_session)):
     b.glicko_rating, b.glicko_rd, b.glicko_vol = b_rating, b_rd, b_vol
     a.comparison_count = (a.comparison_count or 0) + 1
     b.comparison_count = (b.comparison_count or 0) + 1
+
+    # Update binary-search placement bounds for any pending songs.
+    # A tie/skip does not update bounds.
+    if body.winner_id is not None:
+        a_won = body.winner_id == a.id
+        if a.placement_pending:
+            update_bounds(a, b, a_won)
+            maybe_finalize(a)
+        if b.placement_pending:
+            update_bounds(b, a, not a_won)
+            maybe_finalize(b)
 
     db.add(Comparison(song_a_id=a.id, song_b_id=b.id, winner_id=body.winner_id))
     db.commit()

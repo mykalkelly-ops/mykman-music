@@ -17,6 +17,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from .models import Song, Album, PlaylistSong, Playlist
+from .placement import pick_placement_song, pick_opponent
 
 CANDIDATE_POOL = 60  # sample this many random songs, then score pairs
 
@@ -48,6 +49,15 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
     total_songs = db.query(func.count(Song.id)).scalar() or 0
     if total_songs < 2:
         return None
+
+    # HIGHEST PRIORITY: finish any song still in binary-search placement.
+    # pick_opponent falls back to random opponents during cold-start
+    # (when there are no placed anchors yet).
+    placement_song = pick_placement_song(db)
+    if placement_song is not None:
+        opponent = pick_opponent(db, placement_song)
+        if opponent is not None:
+            return (placement_song, opponent)
 
     roll = random.random()
 

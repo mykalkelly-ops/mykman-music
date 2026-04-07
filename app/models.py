@@ -49,6 +49,10 @@ class Song(Base):
     glicko_rd = Column(Float, default=DEFAULT_RD)
     glicko_vol = Column(Float, default=DEFAULT_VOL)
     comparison_count = Column(Integer, default=0)
+    # Binary-search placement state (efficient cold-start for new songs)
+    placement_pending = Column(Boolean, default=True)
+    placement_lo = Column(Float, nullable=True)  # lower bound on true rating
+    placement_hi = Column(Float, nullable=True)  # upper bound on true rating
     album = relationship("Album", back_populates="songs")
     playlist_entries = relationship("PlaylistSong", back_populates="song", cascade="all, delete-orphan")
 
@@ -84,3 +88,14 @@ class Comparison(Base):
 
 def init_db(engine):
     Base.metadata.create_all(engine)
+    # Lightweight SQLite migration: add columns if missing.
+    from sqlalchemy import text, inspect
+    insp = inspect(engine)
+    existing_cols = {c["name"] for c in insp.get_columns("songs")}
+    with engine.begin() as conn:
+        if "placement_pending" not in existing_cols:
+            conn.execute(text("ALTER TABLE songs ADD COLUMN placement_pending BOOLEAN DEFAULT 1"))
+        if "placement_lo" not in existing_cols:
+            conn.execute(text("ALTER TABLE songs ADD COLUMN placement_lo FLOAT"))
+        if "placement_hi" not in existing_cols:
+            conn.execute(text("ALTER TABLE songs ADD COLUMN placement_hi FLOAT"))
