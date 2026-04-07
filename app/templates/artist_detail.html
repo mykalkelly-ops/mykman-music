@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="color:#888; font-size:0.85rem;">ARTIST</div>
+<h1 style="margin:0.25rem 0 0.5rem 0;">{{ artist.name }}</h1>
+<div style="color:#bbb;">
+  {{ artist.gender or "Unknown" }}{% if artist.is_band %} · Band{% endif %}
+  {% if artist.country %} · {{ artist.country }}{% endif %}
+</div>
+
+<h2>Albums</h2>
+<table>
+  <thead><tr><th>Year</th><th>Title</th><th>Genre</th><th>Songs</th></tr></thead>
+  <tbody>
+    {% for a in albums %}
+    <tr>
+      <td>{{ a.year or "" }}</td>
+      <td><a href="/albums/{{ a.id }}">{{ a.title }}</a></td>
+      <td>{{ a.genre or "" }}</td>
+      <td>{{ a.songs|length }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% with target_type='artist', target_id=artist.id %}{% include "_notes_block.html" %}{% endwith %}
+{% endblock %}

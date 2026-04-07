@@ -3,15 +3,22 @@
 <h1>Artists</h1>
 <p style="color:#888">Weighted average of album scores. More liked songs = higher.</p>
 <table>
-  <thead><tr><th>#</th><th>Artist</th><th>Score</th><th>Albums</th><th>Liked / Total Songs</th></tr></thead>
+  <thead><tr><th>#</th><th>Artist</th><th>Score</th><th>Albums</th><th>Liked / Total Songs</th><th>Review</th></tr></thead>
   <tbody>
   {% for a in artists %}
     <tr>
       <td>{{ loop.index }}</td>
-      <td>{{ a.name }}</td>
+      <td><a href="/artists/{{ a.artist_id }}">{{ a.name }}</a></td>
       <td>{{ "%.0f"|format(a.score) }}</td>
       <td>{{ a.album_count }}</td>
       <td>{{ a.liked_songs }} / {{ a.total_songs }}</td>
+      <td>
+        {% if a.artist_id in reviewed_ids %}
+          <a href="/artists/{{ a.artist_id }}#notes">Read</a>
+        {% else %}
+          <a href="/notes/new?target_type=artist&target_id={{ a.artist_id }}" style="color:#555">+</a>
+        {% endif %}
+      </td>
     </tr>
   {% endfor %}
   </tbody>

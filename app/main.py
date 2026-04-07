@@ -88,6 +88,7 @@ def playlist_detail(playlist_id: int, request: Request, db: Session = Depends(ge
 def songs_list(
     request: Request,
     q: str | None = Query(None),
+    tier: int | None = Query(None),
     limit: int = 200,
     db: Session = Depends(get_session),
 ):
@@ -101,25 +102,120 @@ def songs_list(
             query.join(Song.album).join(Album.artist)
             .filter((Song.title.ilike(like)) | (Album.title.ilike(like)) | (Artist.name.ilike(like)))
         )
-    songs = query.order_by(Song.glicko_rating.desc()).limit(limit).all()
+    songs = query.order_by(Song.glicko_rating.desc()).limit(1000).all()
     songs_with_stars = [(s, star_tier(s.glicko_rating, s.glicko_rd)) for s in songs]
+    if tier is not None:
+        songs_with_stars = [(s, st) for (s, st) in songs_with_stars if st == tier]
+    songs_with_stars = songs_with_stars[:limit]
+    reviewed_song_ids = {
+        tid for (tid,) in db.query(Note.target_id).filter(Note.target_type == "song", Note.target_id.isnot(None)).distinct().all()
+    }
     return templates.TemplateResponse(
         request, "songs.html",
-        {"songs_with_stars": songs_with_stars, "q": q or "", "limit": limit},
+        {"songs_with_stars": songs_with_stars, "q": q or "", "limit": limit, "tier": tier, "reviewed_ids": reviewed_song_ids},
     )
 
 
 @app.get("/albums", response_class=HTMLResponse)
 def albums_page(request: Request, db: Session = Depends(get_session)):
+    reviewed = {
+        tid for (tid,) in db.query(Note.target_id).filter(Note.target_type == "album", Note.target_id.isnot(None)).distinct().all()
+    }
     return templates.TemplateResponse(
-        request, "albums.html", {"albums": album_scores(db)}
+        request, "albums.html", {"albums": album_scores(db), "reviewed_ids": reviewed}
     )
 
 
 @app.get("/artists", response_class=HTMLResponse)
 def artists_page(request: Request, db: Session = Depends(get_session)):
+    reviewed = {
+        tid for (tid,) in db.query(Note.target_id).filter(Note.target_type == "artist", Note.target_id.isnot(None)).distinct().all()
+    }
     return templates.TemplateResponse(
-        request, "artists.html", {"artists": artist_scores(db)}
+        request, "artists.html", {"artists": artist_scores(db), "reviewed_ids": reviewed}
+    )
+
+
+def _notes_for(db: Session, target_type: str, target_id: int) -> list[dict]:
+    notes = (
+        db.query(Note)
+        .filter(Note.target_type == target_type, Note.target_id == target_id)
+        .order_by(Note.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": n.id,
+            "title": n.title,
+            "body_html": render_markdown(n.body),
+            "created_at": n.created_at,
+        }
+        for n in notes
+    ]
+
+
+@app.get("/songs/{song_id}", response_class=HTMLResponse)
+def song_detail(song_id: int, request: Request, db: Session = Depends(get_session)):
+    s = (
+        db.query(Song)
+        .options(joinedload(Song.album).joinedload(Album.artist))
+        .filter(Song.id == song_id)
+        .first()
+    )
+    if s is None:
+        return HTMLResponse("Song not found", status_code=404)
+    playlists = (
+        db.query(Playlist)
+        .join(PlaylistSong, PlaylistSong.playlist_id == Playlist.id)
+        .filter(PlaylistSong.song_id == song_id)
+        .all()
+    )
+    return templates.TemplateResponse(
+        request, "song_detail.html",
+        {
+            "song": s,
+            "stars": star_tier(s.glicko_rating, s.glicko_rd),
+            "playlists": playlists,
+            "notes": _notes_for(db, "song", song_id),
+        },
+    )
+
+
+@app.get("/albums/{album_id}", response_class=HTMLResponse)
+def album_detail(album_id: int, request: Request, db: Session = Depends(get_session)):
+    al = (
+        db.query(Album)
+        .options(joinedload(Album.artist), joinedload(Album.songs))
+        .filter(Album.id == album_id)
+        .first()
+    )
+    if al is None:
+        return HTMLResponse("Album not found", status_code=404)
+    songs_sorted = sorted(al.songs, key=lambda s: -s.glicko_rating)
+    return templates.TemplateResponse(
+        request, "album_detail.html",
+        {
+            "album": al,
+            "songs": songs_sorted,
+            "star_tier": star_tier,
+            "notes": _notes_for(db, "album", album_id),
+        },
+    )
+
+
+@app.get("/artists/{artist_id}", response_class=HTMLResponse)
+def artist_detail(artist_id: int, request: Request, db: Session = Depends(get_session)):
+    ar = db.get(Artist, artist_id)
+    if ar is None:
+        return HTMLResponse("Artist not found", status_code=404)
+    albums_sorted = sorted(ar.albums, key=lambda a: -(a.year or 0))
+    return templates.TemplateResponse(
+        request, "artist_detail.html",
+        {
+            "artist": ar,
+            "albums": albums_sorted,
+            "notes": _notes_for(db, "artist", artist_id),
+        },
     )
 
 
@@ -338,6 +434,80 @@ def compare_page(request: Request):
 @app.get("/api/review-prompt")
 def api_review_prompt(db: Session = Depends(get_session)):
     return {"prompt": any_review_candidate(db)}
+
+
+@app.post("/api/undo-last")
+def undo_last(db: Session = Depends(get_session)):
+    """Re-play the last N comparisons (except the most recent) to get a
+    faithful undo of the last comparison's rating effect on both songs.
+    Simpler: just delete the last comparison and re-run all comparisons for
+    both affected songs from scratch. For a v1 we use the pragmatic approach:
+    delete the last comparison record and recompute both songs' ratings from
+    scratch by replaying their entire comparison history."""
+    last = db.query(Comparison).order_by(Comparison.id.desc()).first()
+    if last is None:
+        raise HTTPException(404, "no comparisons yet")
+
+    affected_ids = {last.song_a_id, last.song_b_id}
+    db.delete(last)
+    db.flush()
+
+    # Reset affected songs and replay their histories.
+    from .models import DEFAULT_RATING, DEFAULT_RD, DEFAULT_VOL
+    from .glicko import update_pair as _upd
+
+    # For each affected song we need the chronological list of comparisons it
+    # was part of. We replay them in order, applying updates only to the
+    # affected song (opponents keep their current ratings).
+    for sid in affected_ids:
+        song = db.get(Song, sid)
+        if song is None:
+            continue
+        song.glicko_rating = DEFAULT_RATING
+        song.glicko_rd = DEFAULT_RD
+        song.glicko_vol = DEFAULT_VOL
+        song.comparison_count = 0
+        song.placement_pending = True
+        song.placement_lo = None
+        song.placement_hi = None
+
+    db.flush()
+
+    # Replay chronologically every remaining comparison that touches affected songs.
+    for c in db.query(Comparison).order_by(Comparison.id.asc()).all():
+        if c.song_a_id not in affected_ids and c.song_b_id not in affected_ids:
+            continue
+        a = db.get(Song, c.song_a_id)
+        b = db.get(Song, c.song_b_id)
+        if a is None or b is None:
+            continue
+        if c.winner_id is None:
+            score_a = 0.5
+        elif c.winner_id == a.id:
+            score_a = 1.0
+        else:
+            score_a = 0.0
+        (ar, ard, av), (br, brd, bv) = _upd(
+            a.glicko_rating, a.glicko_rd, a.glicko_vol,
+            b.glicko_rating, b.glicko_rd, b.glicko_vol,
+            score_a,
+        )
+        # Only update affected songs; opponents keep their current values.
+        if a.id in affected_ids:
+            a.glicko_rating, a.glicko_rd, a.glicko_vol = ar, ard, av
+            a.comparison_count = (a.comparison_count or 0) + 1
+            if a.placement_pending and c.winner_id is not None:
+                update_bounds(a, b, c.winner_id == a.id)
+                maybe_finalize(a)
+        if b.id in affected_ids:
+            b.glicko_rating, b.glicko_rd, b.glicko_vol = br, brd, bv
+            b.comparison_count = (b.comparison_count or 0) + 1
+            if b.placement_pending and c.winner_id is not None:
+                update_bounds(b, a, c.winner_id == b.id)
+                maybe_finalize(b)
+
+    db.commit()
+    return {"ok": True, "undone": last.id}
 
 
 @app.get("/api/next-pair")

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="color:#888; font-size:0.85rem;">SONG</div>
+<h1 style="margin:0.25rem 0 0.5rem 0;">{{ song.title }}</h1>
+<div style="color:#bbb;">
+  <a href="/artists/{{ song.album.artist.id }}">{{ song.album.artist.name }}</a>
+  &middot;
+  <a href="/albums/{{ song.album.id }}">{{ song.album.title }}</a>
+  {% if song.album.year %}&middot; {{ song.album.year }}{% endif %}
+  {% if song.album.genre %}&middot; {{ song.album.genre }}{% endif %}
+</div>
+
+<div style="margin-top:1rem;">
+  <div class="stat"><div class="num">{{ "%.0f"|format(song.glicko_rating) }}</div><div class="label">Rating</div></div>
+  <div class="stat"><div class="num">{{ "%.0f"|format(song.glicko_rd) }}</div><div class="label">RD</div></div>
+  <div class="stat"><div class="num">{{ "*" * stars if stars else "—" }}</div><div class="label">Stars</div></div>
+  <div class="stat"><div class="num">{{ song.comparison_count }}</div><div class="label">Comparisons</div></div>
+</div>
+
+{% if playlists %}
+<h2>In playlists</h2>
+<ul>{% for p in playlists %}<li><a href="/playlists/{{ p.id }}">{{ p.name }}</a></li>{% endfor %}</ul>
+{% endif %}
+
+{% with target_type='song', target_id=song.id %}{% include "_notes_block.html" %}{% endwith %}
+{% endblock %}

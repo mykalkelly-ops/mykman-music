@@ -1,12 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
 <div style="display:flex; justify-content:space-between; align-items:center;">
-  <h1>Notes & Reviews</h1>
-  <a href="/notes/new"><button>+ New note</button></a>
+  <h1>MYK Thoughts</h1>
+  <div style="display:flex; gap:0.5rem;">
+    <a href="/notes/new?target_type=general"><button>+ New post</button></a>
+    <a href="/notes/new"><button>+ New review</button></a>
+  </div>
 </div>
+<p style="color:#888; margin-top:0;">Independent posts + reviews of specific songs, albums, and artists.</p>
 
 {% if not items %}
-<p style="color:#888">No notes yet. Write your first review or update.</p>
+<p style="color:#888">No thoughts yet. Write your first post or review.</p>
 {% endif %}
 
 {% for it in items %}

@@ -5,11 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}MYKMAN Music{% endblock %}</title>
 <style>
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #111; color: #eee; }
-  header { padding: 1rem 1.5rem; background: #1a1a1a; border-bottom: 1px solid #333; }
-  header a { color: #eee; margin-right: 1rem; text-decoration: none; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #111; color: #eee; -webkit-text-size-adjust: 100%; }
+  header { padding: 0.9rem 1rem; background: #1a1a1a; border-bottom: 1px solid #333; display:flex; flex-wrap:wrap; gap:0.25rem 1rem; align-items:center; }
+  header a { color: #eee; text-decoration: none; font-size: 0.95rem; }
   header a:hover { color: #6af; }
-  main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+  main { padding: 1rem; max-width: 1100px; margin: 0 auto; }
+  button { background:#2a2a2a; color:#eee; border:1px solid #444; padding:0.55rem 0.9rem; border-radius:6px; cursor:pointer; font-size:0.9rem; }
+  button:hover { background:#333; border-color:#666; }
+  @media (max-width: 700px) {
+    main { padding: 0.75rem; }
+    table { font-size: 0.85rem; }
+    th, td { padding: 0.4rem 0.5rem; }
+    .stat { min-width: 90px; }
+    .stat .num { font-size: 1.3rem; }
+    #pair { flex-direction: column; }
+    #pair .card { font-size: 1rem; }
+  }
   h1, h2 { font-weight: 600; }
   table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
   th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #2a2a2a; font-size: 0.9rem; }
@@ -30,7 +41,7 @@
   <a href="/albums">Albums</a>
   <a href="/artists">Artists</a>
   <a href="/stats">Stats</a>
-  <a href="/notes">Notes</a>
+  <a href="/notes">MYK Thoughts</a>
 </header>
 <main>{% block content %}{% endblock %}</main>
 </body>

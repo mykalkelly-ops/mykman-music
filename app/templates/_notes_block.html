@@ -1,0 +1,28 @@
+{# reusable notes-on-detail-page block #}
+<section id="notes" style="margin-top:2rem;">
+  <div style="display:flex; justify-content:space-between; align-items:baseline;">
+    <h2 style="margin:0;">MYK Thoughts on this {{ target_type }}</h2>
+    <a href="/notes/new?target_type={{ target_type }}&target_id={{ target_id }}"><button>+ Write a review</button></a>
+  </div>
+  {% if not notes %}
+  <p style="color:#888">No notes yet.</p>
+  {% endif %}
+  {% for n in notes %}
+  <article style="background:#1a1a1a; border-radius:8px; padding:1rem 1.25rem; margin:0.75rem 0;">
+    <div style="display:flex; justify-content:space-between;">
+      <div>
+        {% if n.title %}<h3 style="margin:0 0 0.25rem 0;">{{ n.title }}</h3>{% endif %}
+        <div style="color:#666; font-size:0.8rem;">{{ n.created_at.strftime("%Y-%m-%d") if n.created_at else "" }}</div>
+      </div>
+      <a href="/notes/{{ n.id }}/edit"><button>Edit</button></a>
+    </div>
+    <div class="note-body" style="margin-top:0.5rem; line-height:1.55;">{{ n.body_html|safe }}</div>
+  </article>
+  {% endfor %}
+</section>
+<style>
+  .note-body p { margin: 0.5rem 0; }
+  .note-body h1,.note-body h2,.note-body h3 { margin: 1rem 0 0.5rem 0; }
+  .note-body code { background:#222; padding:0.1rem 0.35rem; border-radius:3px; }
+  .note-body blockquote { border-left:3px solid #444; padding-left:0.9rem; color:#bbb; margin:0.5rem 0; }
+</style>
