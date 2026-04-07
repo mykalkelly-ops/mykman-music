@@ -8,11 +8,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from .db import engine, get_session
-from .models import Artist, Album, Song, Playlist, PlaylistSong, Comparison, init_db
+from .models import Artist, Album, Song, Playlist, PlaylistSong, Comparison, Note, init_db
 from .glicko import update_pair
 from .pair_selector import pick_pair
 from .placement import update_bounds, maybe_finalize
 from .scoring import album_scores, artist_scores, star_tier
+from .notes import render_markdown, resolve_target, search_targets
 
 app = FastAPI(title="Music Ranker")
 
@@ -148,6 +149,156 @@ def set_artist_meta(body: ArtistMetaBody, db: Session = Depends(get_session)):
     artist.is_band = body.gender == "Band"
     db.commit()
     return {"ok": True}
+
+
+# ---------- Notes / Blog ----------
+
+@app.get("/notes", response_class=HTMLResponse)
+def notes_index(request: Request, db: Session = Depends(get_session)):
+    notes = db.query(Note).order_by(Note.created_at.desc()).all()
+    items = []
+    for n in notes:
+        items.append({
+            "id": n.id,
+            "title": n.title or "",
+            "body_html": render_markdown(n.body),
+            "created_at": n.created_at,
+            "updated_at": n.updated_at,
+            "target": resolve_target(db, n.target_type, n.target_id),
+        })
+    return templates.TemplateResponse(request, "notes_index.html", {"items": items})
+
+
+@app.get("/notes/new", response_class=HTMLResponse)
+def notes_new(
+    request: Request,
+    target_type: str = "general",
+    target_id: int | None = None,
+    db: Session = Depends(get_session),
+):
+    target = resolve_target(db, target_type, target_id) if target_type != "general" else None
+    return templates.TemplateResponse(
+        request, "notes_edit.html",
+        {"note": None, "target_type": target_type, "target_id": target_id, "target": target},
+    )
+
+
+@app.get("/notes/{note_id}/edit", response_class=HTMLResponse)
+def notes_edit(note_id: int, request: Request, db: Session = Depends(get_session)):
+    n = db.get(Note, note_id)
+    if n is None:
+        return HTMLResponse("Not found", status_code=404)
+    target = resolve_target(db, n.target_type, n.target_id)
+    return templates.TemplateResponse(
+        request, "notes_edit.html",
+        {"note": n, "target_type": n.target_type, "target_id": n.target_id, "target": target},
+    )
+
+
+class NoteBody(BaseModel):
+    target_type: str = "general"
+    target_id: int | None = None
+    title: str | None = None
+    body: str = ""
+
+
+@app.post("/api/notes")
+def create_note(body: NoteBody, db: Session = Depends(get_session)):
+    if body.target_type not in ("song", "album", "artist", "general"):
+        raise HTTPException(400, "invalid target_type")
+    n = Note(
+        target_type=body.target_type,
+        target_id=body.target_id if body.target_type != "general" else None,
+        title=body.title,
+        body=body.body,
+    )
+    db.add(n)
+    db.commit()
+    return {"id": n.id}
+
+
+@app.put("/api/notes/{note_id}")
+def update_note(note_id: int, body: NoteBody, db: Session = Depends(get_session)):
+    n = db.get(Note, note_id)
+    if n is None:
+        raise HTTPException(404, "note not found")
+    n.title = body.title
+    n.body = body.body
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/notes/{note_id}")
+def delete_note(note_id: int, db: Session = Depends(get_session)):
+    n = db.get(Note, note_id)
+    if n is None:
+        raise HTTPException(404, "note not found")
+    db.delete(n)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/target-search")
+def api_target_search(q: str, db: Session = Depends(get_session)):
+    if not q or len(q) < 2:
+        return {"results": []}
+    return {"results": search_targets(db, q)}
+
+
+# ---------- Stats / Analytics ----------
+
+@app.get("/stats", response_class=HTMLResponse)
+def stats_page(request: Request, db: Session = Depends(get_session)):
+    liked_song_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
+
+    def bucket(key_fn, songs):
+        counts: dict = {}
+        for s in songs:
+            k = key_fn(s) or "Unknown"
+            counts[k] = counts.get(k, 0) + 1
+        return sorted(counts.items(), key=lambda kv: -kv[1])
+
+    liked_songs = (
+        db.query(Song).join(Album).join(Artist)
+        .filter(Song.id.in_(liked_song_ids)).all()
+    ) if liked_song_ids else []
+
+    by_genre = bucket(lambda s: s.album.genre, liked_songs)
+    by_decade = bucket(
+        lambda s: f"{(s.album.year // 10) * 10}s" if s.album and s.album.year else None,
+        liked_songs,
+    )
+    by_gender = bucket(lambda s: s.album.artist.gender if s.album and s.album.artist else None, liked_songs)
+
+    total_songs_in_lib = db.query(func.count(Song.id)).scalar() or 0
+    total_liked = len(liked_song_ids)
+    total_comparisons = db.query(func.count(Comparison.id)).scalar() or 0
+
+    # Best monthly playlists by average rating of included songs
+    playlist_rows = []
+    for p in db.query(Playlist).all():
+        avg = (
+            db.query(func.avg(Song.glicko_rating))
+            .join(PlaylistSong, PlaylistSong.song_id == Song.id)
+            .filter(PlaylistSong.playlist_id == p.id)
+            .scalar()
+        )
+        if avg is not None:
+            playlist_rows.append((p.name, p.year, p.month, float(avg)))
+    playlist_rows.sort(key=lambda r: -r[3])
+
+    return templates.TemplateResponse(
+        request, "stats.html",
+        {
+            "total_songs_in_lib": total_songs_in_lib,
+            "total_liked": total_liked,
+            "total_comparisons": total_comparisons,
+            "by_genre": by_genre,
+            "by_decade": by_decade,
+            "by_gender": by_gender,
+            "playlist_rows": playlist_rows,
+        },
+    )
 
 
 # ---------- Comparisons ----------

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ "Edit note" if note else "New note" }}</h1>
+
+<div style="margin:1rem 0;">
+  <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Target</label>
+  <div id="target-display" style="padding:0.5rem; background:#1a1a1a; border-radius:4px;">
+    {% if target %}
+      <span style="color:#6af;">{{ target.type }}</span> &middot; <strong>{{ target.label }}</strong>
+      {% if target.sublabel %}<span style="color:#666"> — {{ target.sublabel }}</span>{% endif %}
+    {% else %}
+      <em style="color:#888">General update (not tied to a specific song/album/artist)</em>
+    {% endif %}
+  </div>
+  <div style="margin-top:0.5rem;">
+    <input type="text" id="target-search" placeholder="Change target — search song / album / artist">
+    <div id="search-results" style="margin-top:0.25rem;"></div>
+  </div>
+</div>
+
+<div style="margin:1rem 0;">
+  <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Title (optional)</label>
+  <input type="text" id="title" value="{{ note.title if note and note.title else '' }}" style="width:100%; max-width:600px;">
+</div>
+
+<div style="margin:1rem 0;">
+  <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Body (Markdown)</label>
+  <textarea id="body" rows="14" style="width:100%; max-width:800px; background:#1a1a1a; color:#eee; border:1px solid #333; padding:0.75rem; font-family:ui-monospace, Menlo, Consolas, monospace;">{{ note.body if note else "" }}</textarea>
+</div>
+
+<div style="display:flex; gap:0.5rem;">
+  <button id="save">Save</button>
+  <a href="/notes"><button type="button">Cancel</button></a>
+</div>
+
+<script>
+let targetType = {{ ("'" + target_type + "'")|safe }};
+let targetId = {{ target_id if target_id is not none else "null" }};
+const isEdit = {{ "true" if note else "false" }};
+const noteId = {{ note.id if note else "null" }};
+
+document.getElementById('target-search').addEventListener('input', async (e) => {
+  const q = e.target.value.trim();
+  const box = document.getElementById('search-results');
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  const r = await fetch('/api/target-search?q=' + encodeURIComponent(q));
+  const data = await r.json();
+  box.innerHTML = data.results.map(r => `<div class="res" data-type="${r.type}" data-id="${r.id}" style="padding:0.4rem 0.5rem; background:#1a1a1a; margin-top:0.15rem; cursor:pointer; border-radius:4px;"><span style="color:#6af;">${r.type}</span> · <strong>${r.label}</strong> <span style="color:#666">${r.sublabel || ''}</span></div>`).join('');
+  for (const el of box.querySelectorAll('.res')) {
+    el.onclick = () => {
+      targetType = el.dataset.type;
+      targetId = Number(el.dataset.id);
+      document.getElementById('target-display').innerHTML = `<span style="color:#6af;">${targetType}</span> · <strong>${el.querySelector('strong').textContent}</strong>`;
+      box.innerHTML = '';
+      e.target.value = '';
+    };
+  }
+});
+
+document.getElementById('save').onclick = async () => {
+  const body = {
+    target_type: targetType,
+    target_id: targetId,
+    title: document.getElementById('title').value || null,
+    body: document.getElementById('body').value,
+  };
+  const url = isEdit ? `/api/notes/${noteId}` : '/api/notes';
+  const method = isEdit ? 'PUT' : 'POST';
+  const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (r.ok) location.href = '/notes';
+  else alert('Save failed');
+};
+</script>
+{% endblock %}

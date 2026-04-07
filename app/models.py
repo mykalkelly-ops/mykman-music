@@ -77,6 +77,17 @@ class PlaylistSong(Base):
     __table_args__ = (UniqueConstraint("playlist_id", "song_id", name="uq_playlist_song"),)
 
 
+class Note(Base):
+    __tablename__ = "notes"
+    id = Column(Integer, primary_key=True)
+    target_type = Column(String, nullable=False)  # "song" | "album" | "artist" | "general"
+    target_id = Column(Integer, nullable=True)    # nullable for "general" updates
+    title = Column(String, nullable=True)
+    body = Column(String, nullable=False, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Comparison(Base):
     __tablename__ = "comparisons"
     id = Column(Integer, primary_key=True)
@@ -99,3 +110,4 @@ def init_db(engine):
             conn.execute(text("ALTER TABLE songs ADD COLUMN placement_lo FLOAT"))
         if "placement_hi" not in existing_cols:
             conn.execute(text("ALTER TABLE songs ADD COLUMN placement_hi FLOAT"))
+    # notes table is created by create_all above if missing

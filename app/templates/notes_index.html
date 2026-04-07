@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center;">
+  <h1>Notes & Reviews</h1>
+  <a href="/notes/new"><button>+ New note</button></a>
+</div>
+
+{% if not items %}
+<p style="color:#888">No notes yet. Write your first review or update.</p>
+{% endif %}
+
+{% for it in items %}
+<article style="background:#1a1a1a; border-radius:8px; padding:1.25rem; margin:1rem 0;">
+  <div style="display:flex; justify-content:space-between; gap:1rem; align-items:baseline;">
+    <div>
+      {% if it.title %}<h2 style="margin:0 0 0.25rem 0;">{{ it.title }}</h2>{% endif %}
+      <div style="color:#888; font-size:0.85rem;">
+        <span style="text-transform:uppercase; letter-spacing:0.05em; color:#6af;">{{ it.target.type }}</span>
+        &middot; <strong>{{ it.target.label }}</strong>
+        {% if it.target.sublabel %}<span style="color:#666"> — {{ it.target.sublabel }}</span>{% endif %}
+        &middot; {{ it.created_at.strftime("%Y-%m-%d %H:%M") if it.created_at else "" }}
+      </div>
+    </div>
+    <div style="display:flex; gap:0.5rem;">
+      <a href="/notes/{{ it.id }}/edit"><button>Edit</button></a>
+      <button onclick="del({{ it.id }})">Delete</button>
+    </div>
+  </div>
+  <div class="body" style="margin-top:0.75rem; line-height:1.55;">{{ it.body_html|safe }}</div>
+</article>
+{% endfor %}
+
+<script>
+async function del(id) {
+  if (!confirm('Delete this note?')) return;
+  await fetch('/api/notes/' + id, {method:'DELETE'});
+  location.reload();
+}
+</script>
+<style>
+  article .body p { margin: 0.5rem 0; }
+  article .body h1, article .body h2, article .body h3 { margin: 1rem 0 0.5rem 0; }
+  article .body code { background:#222; padding:0.1rem 0.35rem; border-radius:3px; }
+  article .body pre { background:#0c0c0c; padding:0.75rem; border-radius:6px; overflow-x:auto; }
+  article .body blockquote { border-left: 3px solid #444; margin: 0.5rem 0; padding-left: 0.9rem; color:#bbb; }
+</style>
+{% endblock %}
