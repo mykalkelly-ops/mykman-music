@@ -14,8 +14,14 @@ from .pair_selector import pick_pair
 from .placement import update_bounds, maybe_finalize
 from .scoring import album_scores, artist_scores, star_tier
 from .notes import render_markdown, resolve_target, search_targets
+from .reviews import (
+    loved_songs_needing_review,
+    loved_albums_needing_review,
+    loved_artists_needing_review,
+    any_review_candidate,
+)
 
-app = FastAPI(title="Music Ranker")
+app = FastAPI(title="MYKMAN Music")
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -40,6 +46,10 @@ def index(request: Request, db: Session = Depends(get_session)):
         .all()
     )
 
+    review_songs = loved_songs_needing_review(db)
+    review_albums = loved_albums_needing_review(db)
+    review_artists = loved_artists_needing_review(db)
+
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -50,6 +60,9 @@ def index(request: Request, db: Session = Depends(get_session)):
             "total_playlists": total_playlists,
             "total_playlist_songs": total_playlist_songs,
             "playlists": playlists,
+            "review_songs": review_songs,
+            "review_albums": review_albums,
+            "review_artists": review_artists,
         },
     )
 
@@ -320,6 +333,11 @@ def _song_payload(s: Song) -> dict:
 @app.get("/compare", response_class=HTMLResponse)
 def compare_page(request: Request):
     return templates.TemplateResponse(request, "compare.html", {})
+
+
+@app.get("/api/review-prompt")
+def api_review_prompt(db: Session = Depends(get_session)):
+    return {"prompt": any_review_candidate(db)}
 
 
 @app.get("/api/next-pair")

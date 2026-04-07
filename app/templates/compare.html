@@ -22,6 +22,13 @@
 </div>
 <p style="color:#666; font-size:0.8rem; margin-top:1rem;">Keys: ← = left, → = right, space = skip</p>
 
+<div id="review" style="display:none; margin-top:1.5rem; padding:1rem; background:#1a1a1a; border-radius:8px; border:1px solid #6af;">
+  <div style="color:#6af; font-size:0.85rem; text-transform:uppercase; letter-spacing:0.05em;">You love this one</div>
+  <div id="review-label" style="font-size:1.1rem; font-weight:600; margin:0.35rem 0 0.6rem 0;"></div>
+  <a id="review-link" href="#"><button>Write a review →</button></a>
+  <button id="review-dismiss">Later</button>
+</div>
+
 <div id="prompt" style="display:none; margin-top:2rem; padding:1rem; background:#1a1a1a; border-radius:8px; border:1px solid #333;">
   <div style="color:#888; font-size:0.85rem;">Tag this artist:</div>
   <div id="prompt-name" style="font-size:1.2rem; font-weight:600; margin:0.5rem 0;"></div>
@@ -94,7 +101,22 @@ for (const btn of document.querySelectorAll('#prompt button')) {
   };
 }
 
+async function loadReview() {
+  const r = await fetch('/api/review-prompt');
+  const data = await r.json();
+  const el = document.getElementById('review');
+  if (!data.prompt) { el.style.display = 'none'; return; }
+  document.getElementById('review-label').textContent = data.prompt.label;
+  document.getElementById('review-link').href =
+    `/notes/new?target_type=${data.prompt.kind}&target_id=${data.prompt.id}`;
+  el.style.display = 'block';
+}
+document.getElementById('review-dismiss').onclick = () => {
+  document.getElementById('review').style.display = 'none';
+};
+
 load();
 loadPrompt();
+loadReview();
 </script>
 {% endblock %}
