@@ -2,23 +2,23 @@
 {% block content %}
 <h1>Songs</h1>
 <form method="get" action="/songs" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-  <input type="text" name="q" value="{{ q }}" placeholder="search title / album / artist">
+  <input type="text" name="q" value="{{ q }}" placeholder="search title / album / artist / genre / year">
   <select name="tier">
-    <option value="">All tiers</option>
+    <option value="">All MYK tiers</option>
     {% for t in [5,4,3,2,1] %}
-    <option value="{{ t }}" {% if tier == t %}selected{% endif %}>{{ "*" * t }}</option>
+    <option value="{{ t }}" {% if tier == t %}selected{% endif %}>{{ t }} MYK{% if t != 1 %}s{% endif %}</option>
     {% endfor %}
   </select>
   <button type="submit">Search</button>
 </form>
-<p>Showing {{ songs|length }} (limit {{ limit }}), sorted by current rating.</p>
+<p>Showing {{ songs_with_stars|length }} (limit {{ limit }}), sorted by current rating.</p>
 <table>
-  <thead><tr><th>#</th><th>Stars</th><th>Title</th><th>Artist</th><th>Album</th><th>Rating</th><th>RD</th><th>Cmps</th><th>Review</th></tr></thead>
+  <thead><tr><th>#</th><th>MYKs</th><th>Title</th><th>Artist</th><th>Album</th><th>Rating</th><th>RD</th><th>Cmps</th><th>Review</th></tr></thead>
   <tbody>
     {% for s, stars in songs_with_stars %}
     <tr>
       <td>{{ loop.index }}</td>
-      <td>{% if stars %}{{ "*" * stars }}{% else %}<span style="color:#555">—</span>{% endif %}</td>
+      <td>{{ render_myks(stars)|safe }}</td>
       <td><a href="/songs/{{ s.id }}">{{ s.title }}</a></td>
       <td><a href="/artists/{{ s.album.artist.id }}">{{ s.album.artist.name }}</a></td>
       <td><a href="/albums/{{ s.album.id }}">{{ s.album.title }}</a></td>
@@ -28,7 +28,7 @@
       <td>
         {% if s.id in reviewed_ids %}
           <a href="/songs/{{ s.id }}#notes" title="Read review">Read</a>
-        {% else %}
+        {% elif request.state.is_admin %}
           <a href="/notes/new?target_type=song&target_id={{ s.id }}" style="color:#555" title="Write review">+</a>
         {% endif %}
       </td>

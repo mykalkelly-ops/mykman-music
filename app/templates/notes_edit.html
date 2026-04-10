@@ -7,13 +7,13 @@
   <div id="target-display" style="padding:0.5rem; background:#1a1a1a; border-radius:4px;">
     {% if target %}
       <span style="color:#6af;">{{ target.type }}</span> &middot; <strong>{{ target.label }}</strong>
-      {% if target.sublabel %}<span style="color:#666"> — {{ target.sublabel }}</span>{% endif %}
+      {% if target.sublabel %}<span style="color:#666"> - {{ target.sublabel }}</span>{% endif %}
     {% else %}
       <em style="color:#888">General update (not tied to a specific song/album/artist)</em>
     {% endif %}
   </div>
   <div style="margin-top:0.5rem;">
-    <input type="text" id="target-search" placeholder="Change target — search song / album / artist">
+    <input type="text" id="target-search" placeholder="Change target - search song / album / artist">
     <div id="search-results" style="margin-top:0.25rem;"></div>
   </div>
 </div>
@@ -24,9 +24,48 @@
 </div>
 
 <div style="margin:1rem 0;">
+  <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Visibility</label>
+  {% set vis = (note.visibility if note and note.visibility else 'public') %}
+  <label style="margin-right:1rem;"><input type="radio" name="visibility" value="public" {% if vis == 'public' %}checked{% endif %}> public</label>
+  <label><input type="radio" name="visibility" value="subscribers" {% if vis == 'subscribers' %}checked{% endif %}> subscribers only</label>
+</div>
+
+<div style="margin:1rem 0;">
+  <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Status</label>
+  {% set st = (note.status if note and note.status else 'published') %}
+  <label style="margin-right:1rem;"><input type="radio" name="status" value="draft" {% if st == 'draft' %}checked{% endif %}> draft</label>
+  <label><input type="radio" name="status" value="published" {% if st == 'published' %}checked{% endif %}> published</label>
+</div>
+
+<div style="margin:1rem 0;">
+  <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Type</label>
+  {% set nk = (note.kind if note and note.kind else 'essay') %}
+  <select id="kind">
+    <option value="essay" {% if nk == 'essay' %}selected{% endif %}>essay</option>
+    <option value="review" {% if nk == 'review' %}selected{% endif %}>review</option>
+    <option value="fragment" {% if nk == 'fragment' %}selected{% endif %}>fragment</option>
+    <option value="note" {% if nk == 'note' %}selected{% endif %}>note</option>
+    <option value="update" {% if nk == 'update' %}selected{% endif %}>update</option>
+  </select>
+</div>
+
+<div style="margin:1rem 0;">
   <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Body (Markdown)</label>
   <textarea id="body" rows="14" style="width:100%; max-width:800px; background:#1a1a1a; color:#eee; border:1px solid #333; padding:0.75rem; font-family:ui-monospace, Menlo, Consolas, monospace;">{{ note.body if note else "" }}</textarea>
 </div>
+
+<div style="margin:1rem 0;">
+  <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Hyperlink another thought</label>
+  <input type="text" id="note-search" placeholder="Search drafts or published thoughts to link">
+  <div id="note-results" style="margin-top:0.35rem;"></div>
+  <p style="color:#888; font-size:0.85rem; margin-top:0.45rem;">
+    This inserts a markdown link into the body. Draft links work for you now and show a “sorry, i haven't finished this one yet” page to regular readers.
+  </p>
+</div>
+
+{% if note %}
+<p style="color:#888; font-size:0.85rem;">{% if st == "draft" %}Draft{% else %}Thought{% endif %} permalink: <a href="/thoughts/{{ note.id }}">/thoughts/{{ note.id }}</a></p>
+{% endif %}
 
 <div style="display:flex; gap:0.5rem;">
   <button id="save">Save</button>
@@ -38,6 +77,18 @@ let targetType = {{ ("'" + target_type + "'")|safe }};
 let targetId = {{ target_id if target_id is not none else "null" }};
 const isEdit = {{ "true" if note else "false" }};
 const noteId = {{ note.id if note else "null" }};
+const bodyBox = document.getElementById('body');
+
+function insertAtCursor(text) {
+  const start = bodyBox.selectionStart ?? bodyBox.value.length;
+  const end = bodyBox.selectionEnd ?? bodyBox.value.length;
+  const before = bodyBox.value.slice(0, start);
+  const after = bodyBox.value.slice(end);
+  bodyBox.value = before + text + after;
+  const pos = start + text.length;
+  bodyBox.focus();
+  bodyBox.setSelectionRange(pos, pos);
+}
 
 document.getElementById('target-search').addEventListener('input', async (e) => {
   const q = e.target.value.trim();
@@ -50,7 +101,29 @@ document.getElementById('target-search').addEventListener('input', async (e) => 
     el.onclick = () => {
       targetType = el.dataset.type;
       targetId = Number(el.dataset.id);
-      document.getElementById('target-display').innerHTML = `<span style="color:#6af;">${targetType}</span> · <strong>${el.querySelector('strong').textContent}</strong>`;
+      document.getElementById('target-display').innerHTML = `<span style="color:#6af;">${targetType}</span> &middot; <strong>${el.querySelector('strong').textContent}</strong>`;
+      box.innerHTML = '';
+      e.target.value = '';
+    };
+  }
+});
+
+document.getElementById('note-search').addEventListener('input', async (e) => {
+  const q = e.target.value.trim();
+  const box = document.getElementById('note-results');
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  const r = await fetch('/api/note-search?q=' + encodeURIComponent(q));
+  const data = await r.json();
+  box.innerHTML = data.results.map(r => `
+    <div class="note-res" data-url="${r.url}" data-title="${String(r.title).replace(/"/g, '&quot;')}"
+      style="padding:0.45rem 0.6rem; background:#1a1a1a; margin-top:0.2rem; cursor:pointer; border-radius:4px;">
+      <strong>${r.title}</strong>
+      <span style="color:#666; margin-left:0.4rem;">${r.status}</span>
+      <span style="color:#888; margin-left:0.4rem;">${r.url}</span>
+    </div>`).join('');
+  for (const el of box.querySelectorAll('.note-res')) {
+    el.onclick = () => {
+      insertAtCursor(`[${el.dataset.title}](${el.dataset.url})`);
       box.innerHTML = '';
       e.target.value = '';
     };
@@ -58,11 +131,16 @@ document.getElementById('target-search').addEventListener('input', async (e) => 
 });
 
 document.getElementById('save').onclick = async () => {
+  const visEl = document.querySelector('input[name="visibility"]:checked');
+  const statusEl = document.querySelector('input[name="status"]:checked');
   const body = {
     target_type: targetType,
     target_id: targetId,
     title: document.getElementById('title').value || null,
-    body: document.getElementById('body').value,
+    body: bodyBox.value,
+    visibility: visEl ? visEl.value : 'public',
+    status: statusEl ? statusEl.value : 'published',
+    kind: document.getElementById('kind').value,
   };
   const url = isEdit ? `/api/notes/${noteId}` : '/api/notes';
   const method = isEdit ? 'PUT' : 'POST';

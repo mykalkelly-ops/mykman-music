@@ -4,45 +4,282 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}MYKMAN Music{% endblock %}</title>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;700&family=Caveat:wght@500;700&family=VT323&display=swap" rel="stylesheet">
 <style>
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #111; color: #eee; -webkit-text-size-adjust: 100%; }
-  header { padding: 0.9rem 1rem; background: #1a1a1a; border-bottom: 1px solid #333; display:flex; flex-wrap:wrap; gap:0.25rem 1rem; align-items:center; }
-  header a { color: #eee; text-decoration: none; font-size: 0.95rem; }
-  header a:hover { color: #6af; }
-  main { padding: 1rem; max-width: 1100px; margin: 0 auto; }
-  button { background:#2a2a2a; color:#eee; border:1px solid #444; padding:0.55rem 0.9rem; border-radius:6px; cursor:pointer; font-size:0.9rem; }
-  button:hover { background:#333; border-color:#666; }
+  :root {
+    --bg: #fff0f8;
+    --panel: rgba(255, 255, 255, 0.78);
+    --panel-border: #ffb3da;
+    --pink: #ff7ac6;
+    --pink-hot: #ff4fae;
+    --pink-soft: #ffd4ea;
+    --sky: #8fd9ff;
+    --sun: #ffe16b;
+    --mint: #9ff0c6;
+    --lav: #c9a7ff;
+    --void: #1a0b22;
+    --text: #2a1736;
+    --text-dim: #7a5a88;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Fredoka', -apple-system, Segoe UI, sans-serif;
+    background:
+      radial-gradient(circle at 18% 12%, var(--sun) 0 70px, transparent 72px),
+      radial-gradient(ellipse 60% 40% at 85% 8%, var(--sky) 0 60%, transparent 62%),
+      radial-gradient(ellipse 50% 35% at 20% 85%, var(--mint) 0 60%, transparent 62%),
+      radial-gradient(ellipse 60% 40% at 90% 80%, var(--lav) 0 60%, transparent 62%),
+      linear-gradient(180deg, #fff0f8 0%, #ffe4f2 40%, #fff6db 100%);
+    background-attachment: fixed;
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-text-size-adjust: 100%;
+  }
+  /* floating emo hearts — love, rot, repeat */
+  body::before {
+    content: "";
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      radial-gradient(circle, transparent 0),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'><g font-family='serif' font-size='22'><text x='20' y='40' fill='%23ff4fae' opacity='0.55'>♥</text><text x='180' y='70' fill='%231a0b22' opacity='0.45'>♡</text><text x='60' y='120' fill='%23ff7ac6' opacity='0.5'>♥</text><text x='200' y='160' fill='%23ff4fae' opacity='0.4'>♡</text><text x='30' y='200' fill='%231a0b22' opacity='0.45' transform='rotate(-15 30 200)'>♥</text><text x='140' y='220' fill='%23ff7ac6' opacity='0.55'>♡</text><text x='110' y='60' fill='%23c9a7ff' opacity='0.5'>✧</text><text x='10' y='90' fill='%23ff4fae' opacity='0.35'>✿</text></g></svg>");
+    background-size: 240px 240px;
+    animation: drift 80s linear infinite;
+  }
+  @keyframes drift {
+    from { background-position: 0 0, 0 0; }
+    to   { background-position: 0 0, -240px 240px; }
+  }
+  /* sad hearts on the edges */
+  .emo-corner {
+    position: fixed; pointer-events: none; z-index: 1;
+    font-family: serif; font-size: 5rem; color: var(--pink-hot);
+    text-shadow: 3px 3px 0 var(--void);
+    opacity: 0.8;
+  }
+  .emo-tl { top: 70px; left: 10px; transform: rotate(-20deg); }
+  .emo-tr { top: 80px; right: 10px; transform: rotate(15deg); color: var(--void); }
+  .emo-bl { bottom: 60px; left: 15px; transform: rotate(10deg); color: var(--lav); }
+  .emo-br { bottom: 70px; right: 10px; transform: rotate(-12deg); font-size: 4rem; }
+  @media (max-width: 900px) { .emo-corner { display: none; } }
+  /* the nihilistic void at the bottom */
+  body::after {
+    content: "";
+    position: fixed; left: 0; right: 0; bottom: 0; height: 40px;
+    background: linear-gradient(180deg, transparent, rgba(26,11,34,0.85));
+    pointer-events: none; z-index: 0;
+  }
+  header, main { position: relative; z-index: 2; }
+  header {
+    padding: 1rem 1.25rem;
+    background: linear-gradient(90deg, #fff 0%, #ffe4f2 50%, #e8f6ff 100%);
+    border-bottom: 3px dashed var(--pink);
+    box-shadow: 0 6px 0 rgba(255,122,198,0.25);
+    display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem; align-items: center;
+  }
+  header a {
+    color: var(--text); text-decoration: none;
+    font-family: 'Fredoka', sans-serif; font-weight: 500;
+    font-size: 1rem;
+    padding: 0.25rem 0.7rem;
+    border-radius: 999px;
+    transition: all 0.15s;
+  }
+  header a:hover {
+    background: var(--pink);
+    color: white;
+    transform: rotate(-2deg) scale(1.05);
+  }
+  header strong {
+    font-family: 'Caveat', cursive; font-weight: 700;
+    font-size: 1.9rem;
+    color: var(--pink-hot);
+    text-shadow: 2px 2px 0 var(--sun), 4px 4px 0 rgba(26,11,34,0.15);
+    display: inline-block; transform: rotate(-3deg);
+  }
+  main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+  h1, h2, h3 {
+    font-family: 'Caveat', cursive; font-weight: 700;
+    color: var(--pink-hot);
+  }
+  h1 {
+    font-size: 3rem; line-height: 1; margin: 0.5rem 0 1rem;
+    text-shadow: 3px 3px 0 var(--sun), 5px 5px 0 rgba(26,11,34,0.12);
+    transform: rotate(-1deg); display: inline-block;
+  }
+  h2 {
+    font-size: 2rem; margin-top: 1.5rem;
+    text-shadow: 2px 2px 0 rgba(143,217,255,0.8);
+  }
+  h3 { font-size: 1.4rem; color: var(--lav); }
+  /* every section = paper sticker */
+  section, .panel {
+    background: var(--panel) !important;
+    border: 2px solid var(--void) !important;
+    border-radius: 22px !important;
+    box-shadow: 4px 4px 0 var(--void), 8px 8px 0 rgba(255,122,198,0.35) !important;
+    padding: 1.25rem !important;
+    margin-bottom: 1.25rem !important;
+    backdrop-filter: blur(2px);
+  }
+  button {
+    background: var(--pink);
+    color: white;
+    border: 2px solid var(--void);
+    padding: 0.55rem 1.1rem;
+    border-radius: 999px;
+    cursor: pointer;
+    font-family: 'Fredoka', sans-serif;
+    font-weight: 500;
+    font-size: 0.95rem;
+    box-shadow: 3px 3px 0 var(--void);
+    transition: all 0.12s;
+  }
+  button:hover {
+    background: var(--pink-hot);
+    transform: translate(-1px, -1px) rotate(-1deg);
+    box-shadow: 4px 4px 0 var(--void);
+  }
+  button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--void); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  a { color: #d33d8f; text-decoration: none; font-weight: 500; }
+  a:hover { text-decoration: underline wavy var(--pink); }
+  table {
+    width: 100%;
+    border-collapse: separate; border-spacing: 0;
+    margin-top: 1rem;
+    background: rgba(255,255,255,0.85);
+    border: 2px solid var(--void);
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 4px 4px 0 rgba(255,122,198,0.4);
+  }
+  th, td { padding: 0.65rem 0.9rem; text-align: left; border-bottom: 1px dashed rgba(255,122,198,0.5); font-size: 0.95rem; color: var(--text); }
+  th {
+    font-family: 'Caveat', cursive; font-weight: 700;
+    color: var(--void);
+    text-transform: none; font-size: 1.15rem; letter-spacing: 0;
+    background: var(--pink-soft);
+    border-bottom: 2px solid var(--void);
+  }
+  tr:hover td { background: rgba(255,225,107,0.35); }
+  .stat {
+    display: inline-block; padding: 0.9rem 1.2rem; margin: 0.35rem;
+    min-width: 130px;
+    background: white;
+    border: 2px solid var(--void);
+    border-radius: 18px;
+    box-shadow: 4px 4px 0 var(--pink);
+    transform: rotate(-1deg);
+  }
+  .stat:nth-child(even) { transform: rotate(1deg); box-shadow: 4px 4px 0 var(--sky); }
+  .stat:nth-child(3n) { box-shadow: 4px 4px 0 var(--mint); }
+  .stat .num {
+    font-family: 'Caveat', cursive;
+    font-size: 2.6rem; line-height: 1; font-weight: 700;
+    color: var(--pink-hot);
+  }
+  .stat .label {
+    font-size: 0.8rem; color: var(--text-dim);
+    font-family: 'Fredoka', sans-serif; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin-top: 0.3rem;
+  }
+  .myk-strip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.22rem;
+    flex-wrap: wrap;
+    vertical-align: middle;
+  }
+  .myk-badge {
+    width: 1.55rem;
+    height: 1.55rem;
+    object-fit: cover;
+    border-radius: 999px;
+    border: 2px solid var(--void);
+    box-shadow: 2px 2px 0 var(--void);
+    background: var(--pink-soft);
+  }
+  .stat .myk-badge {
+    width: 2rem;
+    height: 2rem;
+  }
+  input[type=text], input[type=password], input[type=email], textarea, select {
+    background: white;
+    border: 2px solid var(--void);
+    color: var(--text);
+    padding: 0.55rem 0.85rem;
+    border-radius: 999px;
+    font-family: 'Fredoka', sans-serif;
+    font-size: 0.95rem;
+    box-shadow: 2px 2px 0 var(--pink);
+    outline: none;
+  }
+  textarea { border-radius: 16px; }
+  input[type=text] { width: 300px; max-width: 100%; }
+  input:focus, textarea:focus, select:focus {
+    border-color: var(--pink-hot);
+    box-shadow: 3px 3px 0 var(--pink-hot);
+  }
+  pre, code {
+    font-family: 'VT323', monospace;
+    background: var(--void);
+    border: 2px solid var(--pink);
+    color: var(--sun);
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+  }
+  pre { padding: 0.9rem; overflow-x: auto; border-radius: 14px; }
+  ::selection { background: var(--sun); color: var(--void); }
+  /* tiny existential footer inside every page */
+  main::after {
+    content: "nothing lasts. listen anyway. ♡";
+    display: block; text-align: center;
+    margin: 3rem 0 4rem; color: var(--text-dim);
+    font-family: 'Caveat', cursive; font-size: 1.2rem;
+    opacity: 0.6;
+  }
   @media (max-width: 700px) {
     main { padding: 0.75rem; }
-    table { font-size: 0.85rem; }
+    h1 { font-size: 1.5rem; }
+    table { font-size: 0.82rem; }
     th, td { padding: 0.4rem 0.5rem; }
-    .stat { min-width: 90px; }
-    .stat .num { font-size: 1.3rem; }
+    .stat { min-width: 95px; padding: 0.6rem 0.8rem; }
+    .stat .num { font-size: 1.6rem; }
     #pair { flex-direction: column; }
     #pair .card { font-size: 1rem; }
   }
-  h1, h2 { font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-  th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #2a2a2a; font-size: 0.9rem; }
-  th { color: #999; font-weight: 500; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.05em; }
-  tr:hover td { background: #1a1a1a; }
-  .stat { display: inline-block; padding: 0.75rem 1rem; background: #1a1a1a; border-radius: 6px; margin: 0.25rem; min-width: 120px; }
-  .stat .num { font-size: 1.6rem; font-weight: 600; color: #6af; }
-  .stat .label { font-size: 0.75rem; color: #888; text-transform: uppercase; }
-  a { color: #6af; }
-  input[type=text] { background: #1a1a1a; border: 1px solid #333; color: #eee; padding: 0.5rem; border-radius: 4px; width: 300px; }
 </style>
 </head>
 <body>
 <header>
   <a href="/"><strong>MYKMAN Music</strong></a>
-  <a href="/compare">Compare</a>
+  {% if request.state.is_admin %}<a href="/compare">Compare</a>{% endif %}
   <a href="/songs">Songs</a>
   <a href="/albums">Albums</a>
   <a href="/artists">Artists</a>
   <a href="/stats">Stats</a>
   <a href="/notes">MYK Thoughts</a>
+  {% if request.state.is_admin %}<a href="/album-queue">Album Queue</a>{% endif %}
+  {% if request.state.is_admin %}<a href="/moderation">Moderation</a>{% endif %}
+  {% if request.state.is_admin %}<a href="/subscribers">Subscribers</a>{% endif %}
+  {% if request.state.is_admin %}<a href="/safety">Safety</a>{% endif %}
+  <span style="flex:1;"></span>
+  <a href="{{ kofi_url or 'https://ko-fi.com/mykman' }}" target="_blank" rel="noopener"
+     style="background:var(--pink-soft); border:2px solid var(--void); border-radius:999px; padding:0.25rem 0.75rem; box-shadow:2px 2px 0 var(--void); font-weight:600;">
+    ♡ Support on Ko-fi
+  </a>
+  {% if request.state.is_admin %}
+    <form method="post" action="/logout" style="display:inline; margin:0;"><button type="submit" style="background:transparent; border:none; color:#888; cursor:pointer; font-size:0.85rem;">Logout</button></form>
+  {% else %}
+    <a href="/login" style="color:#555; font-size:0.85rem;">Admin</a>
+  {% endif %}
 </header>
+<div class="emo-corner emo-tl">♥</div>
+<div class="emo-corner emo-tr">♡</div>
+<div class="emo-corner emo-bl">♥</div>
+<div class="emo-corner emo-br">♡</div>
 <main>{% block content %}{% endblock %}</main>
 </body>
 </html>

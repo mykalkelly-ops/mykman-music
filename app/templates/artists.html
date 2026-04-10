@@ -15,7 +15,7 @@
       <td>
         {% if a.artist_id in reviewed_ids %}
           <a href="/artists/{{ a.artist_id }}#notes">Read</a>
-        {% else %}
+        {% elif request.state.is_admin %}
           <a href="/notes/new?target_type=artist&target_id={{ a.artist_id }}" style="color:#555">+</a>
         {% endif %}
       </td>

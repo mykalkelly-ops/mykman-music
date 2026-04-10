@@ -2,21 +2,34 @@
 <section id="notes" style="margin-top:2rem;">
   <div style="display:flex; justify-content:space-between; align-items:baseline;">
     <h2 style="margin:0;">MYK Thoughts on this {{ target_type }}</h2>
+    {% if request.state.is_admin %}
     <a href="/notes/new?target_type={{ target_type }}&target_id={{ target_id }}"><button>+ Write a review</button></a>
+    {% endif %}
   </div>
   {% if not notes %}
-  <p style="color:#888">No notes yet.</p>
+  <p style="color:#888">No reviews yet.</p>
   {% endif %}
   {% for n in notes %}
+  {% set it = n %}
   <article style="background:#1a1a1a; border-radius:8px; padding:1rem 1.25rem; margin:0.75rem 0;">
     <div style="display:flex; justify-content:space-between;">
       <div>
-        {% if n.title %}<h3 style="margin:0 0 0.25rem 0;">{{ n.title }}</h3>{% endif %}
+        {% if n.title %}<h3 style="margin:0 0 0.25rem 0;">{{ n.title }}
+          {% if n.locked %}<span style="font-size:0.7rem; padding:0.1rem 0.5rem; background:var(--pink-soft); border:1.5px solid var(--void); border-radius:999px; color:var(--void); margin-left:0.4rem;">🔒 subscribers only</span>{% endif %}
+        </h3>{% endif %}
         <div style="color:#666; font-size:0.8rem;">{{ n.created_at.strftime("%Y-%m-%d") if n.created_at else "" }}</div>
       </div>
+      {% if request.state.is_admin %}
       <a href="/notes/{{ n.id }}/edit"><button>Edit</button></a>
+      {% endif %}
     </div>
+    {% if n.locked %}
+    <div style="margin-top:0.5rem; color:var(--text-dim); font-style:italic;">{{ n.teaser }} …</div>
+    <div style="margin-top:0.4rem;"><a href="/thoughts/{{ n.id }}">unlock to read ♡</a></div>
+    {% else %}
     <div class="note-body" style="margin-top:0.5rem; line-height:1.55;">{{ n.body_html|safe }}</div>
+    {% include "_comments_block.html" %}
+    {% endif %}
   </article>
   {% endfor %}
 </section>

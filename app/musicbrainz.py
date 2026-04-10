@@ -1,0 +1,156 @@
+"""
+MusicBrainz + Wikidata + Cover Art Archive integration.
+
+Uses stdlib urllib only. Rate-limited to 1 request/second (MusicBrainz policy).
+All network calls are wrapped in try/except and return None / [] / {} on failure.
+"""
+import json
+import time
+import threading
+import urllib.parse
+import urllib.request
+import urllib.error
+
+MB_BASE = "https://musicbrainz.org/ws/2"
+USER_AGENT = "MYKMAN-Music/0.1 (local app)"
+
+_lock = threading.Lock()
+_last_request = 0.0
+MIN_INTERVAL = 1.05  # seconds
+
+
+def _rate_limit():
+    global _last_request
+    with _lock:
+        now = time.time()
+        delta = now - _last_request
+        if delta < MIN_INTERVAL:
+            time.sleep(MIN_INTERVAL - delta)
+        _last_request = time.time()
+
+
+def _get_json(url: str, timeout: float = 15.0) -> dict | None:
+    _rate_limit()
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+            return json.loads(data.decode("utf-8", errors="replace"))
+    except Exception as e:
+        print(f"[mb] GET failed {url}: {e}")
+        return None
+
+
+def search_artist(name: str) -> list[dict]:
+    q = urllib.parse.quote(f'artist:"{name}"')
+    url = f"{MB_BASE}/artist?query={q}&fmt=json&limit=5"
+    data = _get_json(url)
+    if not data:
+        return []
+    out = []
+    for a in data.get("artists", [])[:5]:
+        out.append({
+            "id": a.get("id"),
+            "name": a.get("name"),
+            "country": a.get("country"),
+            "gender": a.get("gender"),
+            "type": a.get("type"),
+            "disambiguation": a.get("disambiguation"),
+            "life-span": a.get("life-span") or {},
+            "score": a.get("score"),
+        })
+    return out
+
+
+def get_artist(mbid: str) -> dict | None:
+    url = f"{MB_BASE}/artist/{mbid}?inc=url-rels+artist-rels+release-groups&fmt=json"
+    return _get_json(url)
+
+
+def search_release_group(artist_name: str, album_name: str) -> dict | None:
+    q = urllib.parse.quote(f'releasegroup:"{album_name}" AND artist:"{artist_name}"')
+    url = f"{MB_BASE}/release-group?query={q}&fmt=json&limit=5"
+    data = _get_json(url)
+    if not data:
+        return None
+    groups = data.get("release-groups") or []
+    if not groups:
+        return None
+    # Prefer primary-type Album, else first
+    for g in groups:
+        if (g.get("primary-type") or "").lower() == "album":
+            return g
+    return groups[0]
+
+
+def search_release(artist_name: str, album_name: str) -> dict | None:
+    q = urllib.parse.quote(f'release:"{album_name}" AND artist:"{artist_name}"')
+    url = f"{MB_BASE}/release?query={q}&fmt=json&limit=10"
+    data = _get_json(url)
+    if not data:
+        return None
+    releases = data.get("releases") or []
+    if not releases:
+        return None
+    for release in releases:
+        if (release.get("status") or "").lower() in ("official", ""):
+            return release
+    return releases[0]
+
+
+def get_release(mbid: str) -> dict | None:
+    url = f"{MB_BASE}/release/{mbid}?inc=recordings&fmt=json"
+    return _get_json(url)
+
+
+def get_release_group(mbid: str) -> dict | None:
+    url = f"{MB_BASE}/release-group/{mbid}?inc=artist-credits&fmt=json"
+    return _get_json(url)
+
+
+def get_cover_art_url(release_group_mbid: str) -> str:
+    return f"https://coverartarchive.org/release-group/{release_group_mbid}/front-500"
+
+
+def get_wikidata_image_url(artist_mbid: str) -> str | None:
+    """Follow MB url-rels -> wikidata -> P18 image -> Commons file path URL."""
+    try:
+        data = get_artist(artist_mbid)
+        if not data:
+            return None
+        qid = None
+        for rel in data.get("relations", []) or []:
+            if rel.get("type") == "wikidata":
+                url = (rel.get("url") or {}).get("resource") or ""
+                # e.g. https://www.wikidata.org/wiki/Q12345
+                if "/wiki/" in url:
+                    qid = url.rsplit("/wiki/", 1)[-1].strip()
+                    if qid:
+                        break
+        if not qid:
+            return None
+        wd_url = f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json"
+        # Wikidata is not subject to MB rate limit but we'll share it anyway.
+        wd = _get_json(wd_url)
+        if not wd:
+            return None
+        entities = wd.get("entities") or {}
+        entity = entities.get(qid) or {}
+        claims = (entity.get("claims") or {}).get("P18") or []
+        if not claims:
+            return None
+        filename = (
+            (((claims[0] or {}).get("mainsnak") or {}).get("datavalue") or {}).get("value")
+        )
+        if not filename:
+            return None
+        return (
+            "https://commons.wikimedia.org/wiki/Special:FilePath/"
+            + urllib.parse.quote(filename) + "?width=500"
+        )
+    except Exception as e:
+        print(f"[mb] wikidata image failed for {artist_mbid}: {e}")
+        return None

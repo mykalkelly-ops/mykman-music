@@ -1,8 +1,8 @@
-from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from .paths import data_dir
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "music.db"
+DB_PATH = data_dir() / "music.db"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(f"sqlite:///{DB_PATH}", future=True)

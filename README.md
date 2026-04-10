@@ -37,6 +37,17 @@ python -m venv .venv
 
 Open http://127.0.0.1:8000 in your browser.
 
+## Admin login
+
+Set an admin password before you expose this outside your machine:
+
+```powershell
+$env:MYKMAN_ADMIN_PASSWORD="your-password-here"
+.venv\Scripts\python -m uvicorn app.main:app --reload
+```
+
+If you do not set it, the fallback password is `changeme`.
+
 ## Project layout
 
 ```
@@ -52,6 +63,10 @@ music-ranker/
   requirements.txt
 ```
 
+## People & Acts
+
+Artists are now classified by `kind` (`solo` / `group` / `collab`) and decomposed into Persons via `ArtistMembership` rows. A solo artist links to one Person; a group links to multiple Persons; a collab act links to other Artists via `child_artist_id`. Stats and gender breakdowns derive from `SongCredit → ArtistMembership → Person.gender` (recursively expanding collab child acts), so a Beyoncé+Jay-Z track counts as "mixed" rather than as one artist's gender. Run the one-time backfill with `python -m app.backfill_people` (it also runs automatically on startup if the persons table is empty).
+
 ## Roadmap
 
 1. **Phase 1 ✅** — Importer + schema + viewer
@@ -60,3 +75,20 @@ music-ranker/
 4. **Phase 4** — Analytics dashboards (genre / decade / gender / monthly-playlist quality)
 5. **Phase 5** — Mac→PC auto-sync, responsive phone-friendly UI
 6. **Phase 6** — Native phone app if needed
+
+## Paywall & Ko-fi
+
+Notes/essays can be marked `subscribers` in the editor. Public readers see the title, date, a short teaser, and a CTA to either enter an access code or tip on Ko-fi.
+
+### Setup
+- Set env vars before launching uvicorn:
+  - `KOFI_VERIFICATION_TOKEN` — copy from your Ko-fi webhooks page
+  - `KOFI_URL` — your Ko-fi page (default `https://ko-fi.com/mykman`)
+- In Ko-fi → Settings → API/Webhooks, point the webhook at `https://yoursite/api/kofi-webhook`.
+- Each new subscription generates a memorable code like `velvet-echo-417` and prints it to stdout. Hand it to the supporter (or check `/subscribers`).
+
+### Manual codes
+Open `/subscribers` (admin only) and click `+ Create manual code` to mint a code for friends/press. Codes default to 365 days.
+
+### How cancellation works
+Ko-fi's webhooks are renewal-based, not cancellation-based. Each successful payment bumps `expires_at` to now + 40 days. If a supporter stops paying, the code goes stale automatically about 40 days after their last successful payment — `is_subscriber()` checks `expires_at` on every request and flips the row to `expired`. Admins can also revoke instantly via the dashboard.

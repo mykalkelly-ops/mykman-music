@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<article style="background:#1a1a1a; border-radius:8px; padding:1.25rem;">
+  <div style="display:flex; justify-content:space-between; gap:1rem; align-items:flex-start;">
+    <div>
+      {% if it.title %}<h1 style="margin:0 0 0.35rem 0;">{{ it.title }}</h1>{% else %}<h1 style="margin:0 0 0.35rem 0;">MYK Thought</h1>{% endif %}
+      {% if request.state.is_admin and it.status == "draft" %}
+      <div style="margin-bottom:0.45rem;"><span style="font-size:0.8rem; padding:0.18rem 0.55rem; background:var(--sun); border:1.5px solid var(--void); border-radius:999px; color:var(--void);">draft</span></div>
+      {% endif %}
+      <div style="color:#888; font-size:0.9rem;">
+        <span style="text-transform:uppercase; letter-spacing:0.05em; color:var(--pink-hot);">{{ it.kind }}</span>
+        &middot;
+        <span style="text-transform:uppercase; letter-spacing:0.05em; color:#6af;">{{ it.target.type }}</span>
+        &middot;
+        {% if it.target.url %}<strong><a href="{{ it.target.url }}">{{ it.target.label }}</a></strong>{% else %}<strong>{{ it.target.label }}</strong>{% endif %}
+        {% if it.target.sublabel %}<span style="color:#666"> - {{ it.target.sublabel }}</span>{% endif %}
+        &middot; {{ it.created_at.strftime("%Y-%m-%d %H:%M") if it.created_at else "" }}
+      </div>
+    </div>
+    {% if request.state.is_admin %}
+    <a href="/notes/{{ it.id }}/edit"><button>Edit</button></a>
+    {% endif %}
+  </div>
+  <div class="body" style="margin-top:1rem; line-height:1.6;">{{ it.body_html|safe }}</div>
+  {% include "_comments_block.html" %}
+</article>
+
+<style>
+  article .body p { margin: 0.5rem 0; }
+  article .body h1, article .body h2, article .body h3 { margin: 1rem 0 0.5rem 0; }
+  article .body code { background:#222; padding:0.1rem 0.35rem; border-radius:3px; }
+  article .body pre { background:#0c0c0c; padding:0.75rem; border-radius:6px; overflow-x:auto; }
+  article .body blockquote { border-left: 3px solid #444; margin: 0.5rem 0; padding-left: 0.9rem; color:#bbb; }
+</style>
+{% endblock %}

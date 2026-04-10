@@ -1,89 +1,215 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Which do you like more?</h1>
-<p id="count" style="color:#888"></p>
+<p id="count" style="color:#7a5a88"></p>
 
-<div id="pair" style="display:flex; gap:1rem; margin-top:1.5rem;">
-  <div class="card" data-side="a" style="flex:1; padding:1.5rem; background:#1a1a1a; border-radius:8px; cursor:pointer; border:2px solid transparent;">
-    <div style="font-size:1.3rem; font-weight:600;" id="a-title">—</div>
-    <div style="color:#aaa;" id="a-artist"></div>
-    <div style="color:#666; font-size:0.85rem; margin-top:0.5rem;" id="a-meta"></div>
-  </div>
-  <div class="card" data-side="b" style="flex:1; padding:1.5rem; background:#1a1a1a; border-radius:8px; cursor:pointer; border:2px solid transparent;">
-    <div style="font-size:1.3rem; font-weight:600;" id="b-title">—</div>
-    <div style="color:#aaa;" id="b-artist"></div>
-    <div style="color:#666; font-size:0.85rem; margin-top:0.5rem;" id="b-meta"></div>
-  </div>
-</div>
+<div id="queue"></div>
 
-<div style="margin-top:1.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
-  <button id="skip">Skip (space)</button>
-  <button id="tie">Tie</button>
+<div style="margin-top:1rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+  <label style="color:#7a5a88; font-size:0.9rem;">Queue size:
+    <select id="queue-size">
+      <option>1</option><option>2</option><option selected>4</option><option>6</option><option>8</option>
+    </select>
+  </label>
+  <button id="refill">Refill queue</button>
   <button id="undo">Undo last</button>
 </div>
-<p style="color:#666; font-size:0.8rem; margin-top:1rem;">Keys: ← = left, → = right, space = skip</p>
+<p style="color:#7a5a88; font-size:0.8rem; margin-top:0.75rem;">Click a song to pick the winner. Use the checkboxes inside each card if nostalgia is pulling on one or both songs, then mark whether the overall choice felt easy or hard.</p>
 
-<div id="review" style="display:none; margin-top:1.5rem; padding:1rem; background:#1a1a1a; border-radius:8px; border:1px solid #6af;">
-  <div style="color:#6af; font-size:0.85rem; text-transform:uppercase; letter-spacing:0.05em;">You love this one</div>
-  <div id="review-label" style="font-size:1.1rem; font-weight:600; margin:0.35rem 0 0.6rem 0;"></div>
-  <a id="review-link" href="#"><button>Write a review →</button></a>
+<div id="review" class="panel" style="display:none; margin-top:1.5rem;">
+  <div style="color:#d33d8f; font-size:0.85rem; text-transform:uppercase; letter-spacing:0.05em;">You love this one ♥</div>
+  <div id="review-label" style="font-size:1.3rem; font-weight:600; margin:0.35rem 0 0.6rem 0; font-family:'Caveat',cursive;"></div>
+  <a id="review-link" href="#"><button>Write a review</button></a>
   <button id="review-dismiss">Later</button>
 </div>
 
-<div id="prompt" style="display:none; margin-top:2rem; padding:1rem; background:#1a1a1a; border-radius:8px; border:1px solid #333;">
-  <div style="color:#888; font-size:0.85rem;">Tag this artist:</div>
-  <div id="prompt-name" style="font-size:1.2rem; font-weight:600; margin:0.5rem 0;"></div>
-  <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-    <button data-g="M">Male</button>
-    <button data-g="F">Female</button>
-    <button data-g="NB">Non-binary</button>
-    <button data-g="Band">Band / Group</button>
-    <button data-g="Unknown">Skip</button>
+<div id="prompt" class="panel" style="display:none; margin-top:2rem;">
+  <div id="prompt-q1">
+    <div style="color:#888; font-size:0.85rem;">Is this a solo artist, group, or collab?</div>
+    <div id="prompt-name" style="font-size:1.2rem; font-weight:600; margin:0.5rem 0;"></div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+      <button data-k="solo">Solo</button>
+      <button data-k="group">Group</button>
+      <button data-k="collab">Collab</button>
+      <button data-k="skip">Skip</button>
+    </div>
+  </div>
+  <div id="prompt-solo" style="display:none;">
+    <div style="color:#888; font-size:0.85rem;">Gender:</div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+      <button data-g="male">Male</button>
+      <button data-g="female">Female</button>
+      <button data-g="nonbinary">Non-binary</button>
+      <button data-g="unknown">Unknown</button>
+    </div>
+  </div>
+  <div id="prompt-collab" style="display:none;">
+    <div style="color:#888; font-size:0.85rem;">Which acts are collaborating? (search and click to add 2+)</div>
+    <input id="collab-q" placeholder="search artists" autocomplete="off" />
+    <div id="collab-results" style="font-size:0.85rem;"></div>
+    <div id="collab-picked" style="margin-top:0.5rem;"></div>
+    <button id="collab-save">Save collab</button>
   </div>
 </div>
 
 <script>
-let current = null;
+const STICKY_KEY = 'mykman_queue';
+let queue = [];
 
-async function load() {
-  const r = await fetch('/api/next-pair');
-  if (!r.ok) { document.getElementById('pair').innerHTML = 'No songs yet. Import or seed first.'; return; }
-  current = await r.json();
-  document.getElementById('count').textContent = `${current.total_comparisons} comparisons so far`;
-  render('a', current.a);
-  render('b', current.b);
-  for (const c of document.querySelectorAll('.card')) c.style.borderColor = 'transparent';
+function saveQueue() {
+  localStorage.setItem(STICKY_KEY, JSON.stringify(queue));
 }
 
-function render(side, s) {
-  document.getElementById(side+'-title').textContent = s.title;
-  document.getElementById(side+'-artist').textContent = s.artist || '';
-  document.getElementById(side+'-meta').textContent =
-    `${s.album || ''} ${s.year ? '· '+s.year : ''} ${s.genre ? '· '+s.genre : ''} · ${s.rating} (RD ${s.rd}, ${s.comparison_count} cmps)`;
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-async function submit(winnerId) {
-  if (!current) return;
-  const body = { song_a_id: current.a.id, song_b_id: current.b.id, winner_id: winnerId };
-  await fetch('/api/compare', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  await load();
+function difficultyControls(pair, idx) {
+  const current = pair.difficulty || '';
+  return `
+    <div style="display:flex; gap:0.35rem; flex-wrap:wrap; margin-top:0.8rem;">
+      <button type="button" data-difficulty="" data-idx="${idx}" ${current === '' ? 'style="background:#ffd8ea;"' : ''}>Normal</button>
+      <button type="button" data-difficulty="easy" data-idx="${idx}" ${current === 'easy' ? 'style="background:#ffd8ea;"' : ''}>Easy choice</button>
+      <button type="button" data-difficulty="hard" data-idx="${idx}" ${current === 'hard' ? 'style="background:#ffd8ea;"' : ''}>Hard choice</button>
+    </div>
+  `;
 }
 
-document.querySelector('[data-side=a]').onclick = () => submit(current.a.id);
-document.querySelector('[data-side=b]').onclick = () => submit(current.b.id);
-document.getElementById('skip').onclick = () => submit(null);
-document.getElementById('tie').onclick = () => submit(null);
+function songLine(s, idx, side, checked) {
+  const meta = `${s.album || ''}${s.year ? ' · ' + s.year : ''}${s.genre ? ' · ' + s.genre : ''} · ${s.rating} (RD ${s.rd}, ${s.comparison_count} cmps)`;
+  return `
+    <label style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.5rem; color:#7a5a88; font-size:0.85rem;">
+      <input type="checkbox" data-nostalgia-side="${side}" data-idx="${idx}" ${checked ? 'checked' : ''}>
+      Nostalgia factor
+    </label>
+    <div style="font-family:'Caveat',cursive; font-size:1.9rem; font-weight:700; color:#ff5fb0; line-height:1.05; text-shadow:0 1px 0 #fff7fb;">${escapeHtml(s.title)}</div>
+    <div style="color:#3a2342; font-weight:700; margin-top:0.2rem;">${escapeHtml(s.artist || '')}</div>
+    <div style="color:#7a5a88; font-size:0.8rem; margin-top:0.35rem;">${escapeHtml(meta)}</div>
+  `;
+}
+
+function renderQueue() {
+  const root = document.getElementById('queue');
+  root.innerHTML = '';
+  if (!queue.length) {
+    root.innerHTML = '<p style="color:#7a5a88">Queue empty. Click "Refill queue".</p>';
+    return;
+  }
+  queue.forEach((pair, idx) => {
+    if (pair.resolved) return;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-bottom:1.25rem;';
+    wrap.innerHTML = `
+      <div class="panel" style="padding:1rem;">
+        ${difficultyControls(pair, idx)}
+        <div style="display:flex; gap:1rem; margin-top:0.9rem; align-items:stretch;">
+          <div class="card panel" style="flex:1; cursor:pointer;" data-choose="a">${songLine(pair.a, idx, 'a', !!pair.nostalgiaA)}</div>
+          <div class="card panel" style="flex:1; cursor:pointer;" data-choose="b">${songLine(pair.b, idx, 'b', !!pair.nostalgiaB)}</div>
+          <div style="display:flex; flex-direction:column; gap:0.4rem; justify-content:center;">
+            <button data-choose="skip">Skip</button>
+            <button data-choose="tie">Tie</button>
+          </div>
+        </div>
+      </div>
+    `;
+    wrap.querySelectorAll('[data-choose]').forEach(el => {
+      el.addEventListener('click', (event) => {
+        if (event.target.matches('input[type="checkbox"]')) return;
+        resolve(idx, el.dataset.choose);
+      });
+    });
+    wrap.querySelectorAll('[data-difficulty]').forEach(el => {
+      el.addEventListener('click', () => {
+        queue[idx].difficulty = el.dataset.difficulty || null;
+        saveQueue();
+        renderQueue();
+      });
+    });
+    wrap.querySelectorAll('[data-nostalgia-side]').forEach(el => {
+      el.addEventListener('click', (event) => event.stopPropagation());
+      el.addEventListener('change', () => {
+        if (el.dataset.nostalgiaSide === 'a') queue[idx].nostalgiaA = el.checked;
+        if (el.dataset.nostalgiaSide === 'b') queue[idx].nostalgiaB = el.checked;
+        saveQueue();
+      });
+    });
+    root.appendChild(wrap);
+  });
+  if (queue.every(p => p.resolved)) {
+    root.innerHTML += '<p style="color:#7a5a88;">All done. Refill the queue ♥</p>';
+  }
+}
+
+async function resolve(idx, choice) {
+  const pair = queue[idx];
+  if (!pair || pair.resolved) return;
+  let winner = null;
+  if (choice === 'a') winner = pair.a.id;
+  else if (choice === 'b') winner = pair.b.id;
+  pair.resolved = true;
+  saveQueue();
+  renderQueue();
+  try {
+    await fetch('/api/compare', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        song_a_id: pair.a.id,
+        song_b_id: pair.b.id,
+        winner_id: winner,
+        difficulty: pair.difficulty || null,
+        nostalgia: !!pair.nostalgiaA || !!pair.nostalgiaB
+      }),
+    });
+    refreshCount();
+  } catch (e) {}
+}
+
+async function refreshCount() {
+  try {
+    const r = await fetch('/api/comparison-count');
+    if (r.ok) {
+      const d = await r.json();
+      document.getElementById('count').textContent = `${d.count} comparisons so far`;
+    }
+  } catch (e) {}
+}
+
+async function loadQueue(forceNew = false) {
+  if (!forceNew) {
+    const saved = localStorage.getItem(STICKY_KEY);
+    if (saved) {
+      try {
+        queue = JSON.parse(saved);
+        if (queue.length && queue.some(p => !p.resolved)) {
+          renderQueue();
+          refreshCount();
+          return;
+        }
+      } catch (e) {}
+    }
+  }
+  const n = Number(document.getElementById('queue-size').value || 4);
+  const r = await fetch('/api/next-pairs?n=' + n);
+  if (!r.ok) {
+    document.getElementById('queue').innerHTML = 'No songs yet.';
+    return;
+  }
+  const data = await r.json();
+  queue = (data.pairs || []).map(p => ({ ...p, resolved: false, nostalgiaA: false, nostalgiaB: false, difficulty: null }));
+  saveQueue();
+  document.getElementById('count').textContent = `${data.total_comparisons} comparisons so far`;
+  renderQueue();
+}
+
+document.getElementById('refill').onclick = () => loadQueue(true);
+document.getElementById('queue-size').onchange = () => loadQueue(true);
 document.getElementById('undo').onclick = async () => {
   const r = await fetch('/api/undo-last', {method:'POST'});
   if (!r.ok) { alert('Nothing to undo.'); return; }
-  await load();
+  localStorage.removeItem(STICKY_KEY);
+  await loadQueue(true);
 };
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowLeft') submit(current.a.id);
-  else if (e.key === 'ArrowRight') submit(current.b.id);
-  else if (e.key === ' ') { e.preventDefault(); submit(null); }
-});
 
 async function loadPrompt() {
   const r = await fetch('/api/next-artist-prompt');
@@ -95,17 +221,90 @@ async function loadPrompt() {
   el.style.display = 'block';
 }
 
-for (const btn of document.querySelectorAll('#prompt button')) {
+function resetPromptUI() {
+  document.getElementById('prompt-q1').style.display = 'block';
+  document.getElementById('prompt-solo').style.display = 'none';
+  document.getElementById('prompt-collab').style.display = 'none';
+  collabPicked = [];
+  renderCollabPicked();
+}
+
+let collabPicked = [];
+function renderCollabPicked() {
+  const div = document.getElementById('collab-picked');
+  div.innerHTML = collabPicked.map(a => `<span style="display:inline-block; background:#333; padding:0.2rem 0.5rem; margin:0.1rem; border-radius:4px;">${a.name}</span>`).join('');
+}
+
+async function quickClassify(payload) {
+  const id = Number(document.getElementById('prompt').dataset.artistId);
+  await fetch(`/api/artists/${id}/quick-classify`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload),
+  });
+  resetPromptUI();
+  loadPrompt();
+}
+
+for (const btn of document.querySelectorAll('#prompt-q1 button')) {
   btn.onclick = async () => {
-    const id = document.getElementById('prompt').dataset.artistId;
-    await fetch('/api/artist-meta', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({artist_id: Number(id), gender: btn.dataset.g}),
-    });
-    loadPrompt();
+    const k = btn.dataset.k;
+    if (k === 'skip') { resetPromptUI(); loadPrompt(); return; }
+    if (k === 'group') {
+      await quickClassify({kind:'group'});
+    } else if (k === 'solo') {
+      document.getElementById('prompt-q1').style.display = 'none';
+      document.getElementById('prompt-solo').style.display = 'block';
+    } else if (k === 'collab') {
+      document.getElementById('prompt-q1').style.display = 'none';
+      document.getElementById('prompt-collab').style.display = 'block';
+    }
   };
 }
+
+for (const btn of document.querySelectorAll('#prompt-solo button')) {
+  btn.onclick = async () => {
+    await quickClassify({kind:'solo', gender: btn.dataset.g});
+  };
+}
+
+document.getElementById('collab-q').oninput = async () => {
+  const q = document.getElementById('collab-q').value;
+  const div = document.getElementById('collab-results');
+  div.innerHTML = '';
+  if (q.length < 1) return;
+  const r = await fetch('/api/artist-search?q=' + encodeURIComponent(q));
+  const data = await r.json();
+  for (const a of data.results) {
+    const b = document.createElement('button');
+    b.textContent = a.name;
+    b.onclick = () => {
+      if (!collabPicked.find(x => x.id === a.id)) collabPicked.push(a);
+      renderCollabPicked();
+    };
+    div.appendChild(b);
+  }
+  const create = document.createElement('button');
+  create.textContent = `+ Create "${q}"`;
+  create.style.marginLeft = '0.3rem';
+  create.onclick = async () => {
+    const resp = await fetch('/api/artists', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name: q, kind: 'solo'})
+    });
+    const newA = await resp.json();
+    if (!collabPicked.find(x => x.id === newA.id)) collabPicked.push({id:newA.id, name:newA.name});
+    document.getElementById('collab-q').value = '';
+    div.innerHTML = '';
+    renderCollabPicked();
+  };
+  div.appendChild(create);
+};
+
+document.getElementById('collab-save').onclick = async () => {
+  if (collabPicked.length < 2) { alert('pick at least 2 acts'); return; }
+  await quickClassify({kind:'collab', child_artist_ids: collabPicked.map(a => a.id)});
+};
 
 async function loadReview() {
   const r = await fetch('/api/review-prompt');
@@ -113,15 +312,14 @@ async function loadReview() {
   const el = document.getElementById('review');
   if (!data.prompt) { el.style.display = 'none'; return; }
   document.getElementById('review-label').textContent = data.prompt.label;
-  document.getElementById('review-link').href =
-    `/notes/new?target_type=${data.prompt.kind}&target_id=${data.prompt.id}`;
+  document.getElementById('review-link').href = `/notes/new?target_type=${data.prompt.kind}&target_id=${data.prompt.id}`;
   el.style.display = 'block';
 }
 document.getElementById('review-dismiss').onclick = () => {
   document.getElementById('review').style.display = 'none';
 };
 
-load();
+loadQueue();
 loadPrompt();
 loadReview();
 </script>

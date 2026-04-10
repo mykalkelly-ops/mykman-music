@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Album Queue</h1>
+<p style="color:#888">These albums are by artists you clearly listen to, but none of their songs showed up in your month playlists. Mark whether you listened to them so “songs listened” gets smarter without pretending certainty.</p>
+
+{% if not items %}
+<p style="color:#888">Queue is empty right now.</p>
+{% else %}
+<table>
+  <thead><tr><th>Artist</th><th>Album</th><th>Year</th><th>Tracks Imported</th><th></th></tr></thead>
+  <tbody>
+    {% for it in items %}
+    <tr id="album-row-{{ it.id }}">
+      <td>{{ it.artist_name }}</td>
+      <td><a href="/albums/{{ it.id }}">{{ it.title }}</a></td>
+      <td>{{ it.year or "" }}</td>
+      <td>{{ it.song_count }}</td>
+      <td>
+        <button type="button" onclick="decide({{ it.id }}, true)">Listened</button>
+        <button type="button" onclick="decide({{ it.id }}, false)">Didn't listen</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<script>
+async function decide(albumId, listened) {
+  await fetch(`/api/albums/${albumId}/listened`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({listened}),
+  });
+  const row = document.getElementById(`album-row-${albumId}`);
+  if (row) row.remove();
+}
+</script>
+{% endblock %}

@@ -2,12 +2,14 @@
 {% block content %}
 <div style="display:flex; justify-content:space-between; align-items:center;">
   <h1>MYK Thoughts</h1>
+  {% if request.state.is_admin %}
   <div style="display:flex; gap:0.5rem;">
     <a href="/notes/new?target_type=general"><button>+ New post</button></a>
     <a href="/notes/new"><button>+ New review</button></a>
   </div>
+  {% endif %}
 </div>
-<p style="color:#888; margin-top:0;">Independent posts + reviews of specific songs, albums, and artists.</p>
+<p style="color:#888; margin-top:0;">Independent posts + reviews + memoir fragments attached to songs, albums, artists, or nothing at all.</p>
 
 {% if not items %}
 <p style="color:#888">No thoughts yet. Write your first post or review.</p>
@@ -17,22 +19,56 @@
 <article style="background:#1a1a1a; border-radius:8px; padding:1.25rem; margin:1rem 0;">
   <div style="display:flex; justify-content:space-between; gap:1rem; align-items:baseline;">
     <div>
-      {% if it.title %}<h2 style="margin:0 0 0.25rem 0;">{{ it.title }}</h2>{% endif %}
+      {% if it.title %}
+      <h2 style="margin:0 0 0.25rem 0;">
+        <a href="/thoughts/{{ it.id }}" style="color:#eee; text-decoration:none;">{{ it.title }}</a>
+        {% if request.state.is_admin and it.status == "draft" %}
+        <span style="font-size:0.75rem; padding:0.15rem 0.55rem; background:var(--sun); border:1.5px solid var(--void); border-radius:999px; color:var(--void); margin-left:0.4rem; vertical-align:middle;">draft</span>
+        {% endif %}
+        {% if it.locked %}
+        <span style="font-size:0.75rem; padding:0.15rem 0.55rem; background:var(--pink-soft); border:1.5px solid var(--void); border-radius:999px; color:var(--void); margin-left:0.4rem; vertical-align:middle;">subscribers only</span>
+        {% endif %}
+      </h2>
+      {% endif %}
       <div style="color:#888; font-size:0.85rem;">
+        <span style="text-transform:uppercase; letter-spacing:0.05em; color:var(--pink-hot);">{{ it.kind }}</span>
+        &middot;
         <span style="text-transform:uppercase; letter-spacing:0.05em; color:#6af;">{{ it.target.type }}</span>
-        &middot; <strong>{{ it.target.label }}</strong>
-        {% if it.target.sublabel %}<span style="color:#666"> — {{ it.target.sublabel }}</span>{% endif %}
+        &middot;
+        {% if it.target.url %}<strong><a href="{{ it.target.url }}">{{ it.target.label }}</a></strong>{% else %}<strong>{{ it.target.label }}</strong>{% endif %}
+        {% if it.target.sublabel %}<span style="color:#666"> - {{ it.target.sublabel }}</span>{% endif %}
         &middot; {{ it.created_at.strftime("%Y-%m-%d %H:%M") if it.created_at else "" }}
+        &middot; <a href="/thoughts/{{ it.id }}">{{ it.comment_count }} comment{{ "" if it.comment_count == 1 else "s" }}</a>
       </div>
     </div>
+    {% if request.state.is_admin %}
     <div style="display:flex; gap:0.5rem;">
       <a href="/notes/{{ it.id }}/edit"><button>Edit</button></a>
       <button onclick="del({{ it.id }})">Delete</button>
     </div>
+    {% endif %}
   </div>
+  {% if it.locked %}
+  <div style="margin-top:0.75rem; color:var(--text-dim); font-style:italic;">{{ it.teaser }} ...</div>
+  <div style="margin-top:0.5rem;"><a href="/thoughts/{{ it.id }}">unlock to read ♡</a></div>
+  {% else %}
   <div class="body" style="margin-top:0.75rem; line-height:1.55;">{{ it.body_html|safe }}</div>
+  <div style="margin-top:0.75rem;"><a href="/thoughts/{{ it.id }}">Open discussion</a></div>
+  {% include "_comments_block.html" %}
+  {% endif %}
 </article>
 {% endfor %}
+
+{% if not request.state.is_admin and not is_subscriber %}
+<section style="margin-top:1.5rem; text-align:center;">
+  <h2 style="margin-top:0;">there's a quieter shelf ♡</h2>
+  <p style="color:var(--text-dim);">Some thoughts here are kept just for the people who chip in on Ko-fi. No tiers, no upsell, just one code for the deeper shelf.</p>
+  <div style="display:flex; gap:0.6rem; justify-content:center; flex-wrap:wrap;">
+    <a href="/unlock"><button type="button">I have a code</button></a>
+    <a href="{{ kofi_url }}" target="_blank" rel="noopener"><button type="button" style="background:var(--lav);">♡ Get a code on Ko-fi</button></a>
+  </div>
+</section>
+{% endif %}
 
 <script>
 async function del(id) {

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<section style="max-width:560px; margin:2rem auto;">
+  <h1 style="font-family:'Caveat',cursive; font-size:3rem;">unlock ♡</h1>
+  <p style="color:var(--text-dim); font-size:1.05rem;">
+    Some thoughts are kept just for the people who chip in. Got a code? Drop it below.
+  </p>
+
+  {% if error %}
+  <p style="color:#c4255b; font-weight:600;">that code didn't unlock anything. maybe it expired, maybe a typo. ♡</p>
+  {% endif %}
+
+  <form method="post" action="/unlock" style="display:flex; flex-direction:column; gap:0.6rem; margin-top:1rem;">
+    <input type="text" name="code" placeholder="velvet-echo-417" autocomplete="off" required style="font-family:'VT323',monospace; font-size:1.15rem; letter-spacing:0.05em;">
+    <button type="submit">Unlock</button>
+  </form>
+
+  <div style="margin-top:2rem; padding-top:1rem; border-top:2px dashed var(--pink);">
+    <h2 style="margin-top:0;">need a code?</h2>
+    <p>Tip me on Ko-fi at any tier and a code lands in the webhook the same minute. Codes last as long as the support does.</p>
+    <p style="color:var(--text-dim); font-size:0.9rem;">no paywall pop-ups, no upsell. just exclusivity for the people closest to the work.</p>
+    <a href="{{ kofi_url }}" target="_blank" rel="noopener"><button type="button">♡ Get a code on Ko-fi</button></a>
+  </div>
+
+  <p style="margin-top:1.5rem; font-family:'Caveat',cursive; font-size:1.3rem; color:var(--text-dim); text-align:center;">
+    this one's a little too close to the chest. ♡
+  </p>
+</section>
+{% endblock %}

@@ -7,15 +7,15 @@ Usage:
 import plistlib
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from .db import engine, SessionLocal
-from .models import (
-    Artist, Album, Song, Playlist, PlaylistSong, init_db
-)
+from .models import Artist, Album, Song, Playlist, PlaylistSong, init_db
+from .dedupe import merge_case_duplicates
+from .history import backup_before_import
+from .genres import normalize_genre
 
 MONTH_MAP = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
@@ -29,18 +29,23 @@ PLAYLIST_NAME_RE = re.compile(
 
 
 def parse_playlist_name(name: str):
-    """Return (month, year) if name matches 'Month YYYY', else (None, None)."""
     if not name:
         return (None, None)
-    m = PLAYLIST_NAME_RE.match(name.strip())
-    if not m:
+    match = PLAYLIST_NAME_RE.match(name.strip())
+    if not match:
         return (None, None)
-    return (MONTH_MAP[m.group(1).lower()], int(m.group(2)))
+    return (MONTH_MAP[match.group(1).lower()], int(match.group(2)))
+
+
+def album_key(track: dict) -> tuple[str, str]:
+    artist_name = (track.get("Album Artist") or track.get("Artist") or "Unknown Artist").strip()
+    album_title = (track.get("Album") or "Unknown Album").strip()
+    return (artist_name.lower(), album_title.lower())
 
 
 def get_or_create_artist(db: Session, name: str) -> Artist:
     name = (name or "Unknown Artist").strip()
-    artist = db.query(Artist).filter_by(name=name).one_or_none()
+    artist = db.query(Artist).filter(Artist.name.ilike(name)).one_or_none()
     if artist is None:
         artist = Artist(name=name)
         db.add(artist)
@@ -50,13 +55,12 @@ def get_or_create_artist(db: Session, name: str) -> Artist:
 
 def get_or_create_album(db: Session, artist: Artist, title: str, year: int | None, genre: str | None) -> Album:
     title = (title or "Unknown Album").strip()
-    album = db.query(Album).filter_by(artist_id=artist.id, title=title).one_or_none()
+    album = db.query(Album).filter(Album.artist_id == artist.id, Album.title.ilike(title)).one_or_none()
     if album is None:
         album = Album(artist_id=artist.id, title=title, year=year, genre=genre)
         db.add(album)
         db.flush()
     else:
-        # Backfill metadata if missing
         if album.year is None and year is not None:
             album.year = year
         if not album.genre and genre:
@@ -65,95 +69,124 @@ def get_or_create_album(db: Session, artist: Artist, title: str, year: int | Non
 
 
 def import_library(xml_path: Path) -> dict:
-    with open(xml_path, "rb") as f:
-        plist = plistlib.load(f)
+    backup_path = backup_before_import()
+    with open(xml_path, "rb") as handle:
+        plist = plistlib.load(handle)
 
     tracks = plist.get("Tracks", {})
     playlists = plist.get("Playlists", [])
 
     init_db(engine)
     db = SessionLocal()
-    stats = {"songs": 0, "artists": 0, "albums": 0, "playlists": 0, "playlist_songs": 0, "skipped_playlists": 0}
+    stats = {
+        "songs": 0,
+        "artists": 0,
+        "albums": 0,
+        "playlists": 0,
+        "playlist_songs": 0,
+        "skipped_playlists": 0,
+        "backup": backup_path or "",
+    }
 
     try:
-        # ---- Tracks ----
+        wanted_track_ids: set[str] = set()
+        listened_album_keys: set[tuple[str, str]] = set()
+
+        for playlist in playlists:
+            if parse_playlist_name(playlist.get("Name", ""))[0] is None:
+                continue
+            for item in (playlist.get("Playlist Items", []) or []):
+                track_id = item.get("Track ID")
+                if track_id is None:
+                    continue
+                tid = str(track_id)
+                wanted_track_ids.add(tid)
+                track = tracks.get(tid) or tracks.get(track_id)
+                if track:
+                    listened_album_keys.add(album_key(track))
+
         track_id_to_song_pk: dict[str, int] = {}
         artist_cache: dict[str, int] = {}
 
-        for track_id, t in tracks.items():
-            # Skip non-music items (podcasts, videos, etc.)
-            if t.get("Kind") and "audio" not in str(t.get("Kind", "")).lower() and "matched" not in str(t.get("Kind", "")).lower() and "purchased" not in str(t.get("Kind", "")).lower() and "protected" not in str(t.get("Kind", "")).lower():
-                # Be permissive; Apple Music entries often have "Apple Music AAC audio file" or similar
-                pass
+        for track_id, track in tracks.items():
+            if album_key(track) not in listened_album_keys:
+                continue
 
-            name = t.get("Name")
+            name = track.get("Name")
             if not name:
                 continue
-            artist_name = t.get("Album Artist") or t.get("Artist") or "Unknown Artist"
-            album_title = t.get("Album") or "Unknown Album"
-            year = t.get("Year")
-            genre = t.get("Genre")
 
-            if artist_name in artist_cache:
-                artist = db.get(Artist, artist_cache[artist_name])
+            artist_name = track.get("Album Artist") or track.get("Artist") or "Unknown Artist"
+            album_title = track.get("Album") or "Unknown Album"
+            year = track.get("Year")
+            genre = normalize_genre(track.get("Genre"))
+
+            cache_key = artist_name.strip()
+            if cache_key in artist_cache:
+                artist = db.get(Artist, artist_cache[cache_key])
             else:
                 artist = get_or_create_artist(db, artist_name)
-                artist_cache[artist_name] = artist.id
+                artist_cache[cache_key] = artist.id
 
             album = get_or_create_album(db, artist, album_title, year, genre)
-
             song = (
                 db.query(Song)
-                .filter_by(album_id=album.id, title=name)
+                .filter(Song.album_id == album.id, Song.title.ilike(name))
                 .one_or_none()
             )
             if song is None:
                 song = Song(
                     album_id=album.id,
                     title=name,
-                    duration_ms=t.get("Total Time"),
+                    duration_ms=track.get("Total Time"),
                     apple_track_id=str(track_id),
+                    liked=str(track_id) in wanted_track_ids,
                 )
                 db.add(song)
                 db.flush()
                 stats["songs"] += 1
+            else:
+                if song.apple_track_id is None:
+                    song.apple_track_id = str(track_id)
+                if str(track_id) in wanted_track_ids:
+                    song.liked = True
+
             track_id_to_song_pk[str(track_id)] = song.id
 
         db.commit()
         stats["artists"] = db.query(Artist).count()
         stats["albums"] = db.query(Album).count()
 
-        # ---- Playlists ----
-        for p in playlists:
-            pname = p.get("Name", "")
-            month, year = parse_playlist_name(pname)
+        for playlist in playlists:
+            playlist_name = playlist.get("Name", "")
+            month, year = parse_playlist_name(playlist_name)
             if month is None:
                 stats["skipped_playlists"] += 1
                 continue
 
-            playlist = db.query(Playlist).filter_by(name=pname).one_or_none()
-            if playlist is None:
-                playlist = Playlist(name=pname, month=month, year=year)
-                db.add(playlist)
+            row = db.query(Playlist).filter_by(name=playlist_name).one_or_none()
+            if row is None:
+                row = Playlist(name=playlist_name, month=month, year=year)
+                db.add(row)
                 db.flush()
             stats["playlists"] += 1
 
-            items = p.get("Playlist Items", []) or []
-            for item in items:
-                tid = str(item.get("Track ID"))
-                song_pk = track_id_to_song_pk.get(tid)
-                if song_pk is None:
+            seen_song_pks: set[int] = {
+                song_id for (song_id,) in db.query(PlaylistSong.song_id).filter_by(playlist_id=row.id).all()
+            }
+            for item in (playlist.get("Playlist Items", []) or []):
+                track_id = str(item.get("Track ID"))
+                song_pk = track_id_to_song_pk.get(track_id)
+                if song_pk is None or song_pk in seen_song_pks:
                     continue
-                exists = (
-                    db.query(PlaylistSong)
-                    .filter_by(playlist_id=playlist.id, song_id=song_pk)
-                    .one_or_none()
-                )
-                if exists is None:
-                    db.add(PlaylistSong(playlist_id=playlist.id, song_id=song_pk))
-                    stats["playlist_songs"] += 1
+                seen_song_pks.add(song_pk)
+                db.add(PlaylistSong(playlist_id=row.id, song_id=song_pk))
+                stats["playlist_songs"] += 1
 
         db.commit()
+        merge_case_duplicates(db)
+        stats["artists"] = db.query(Artist).count()
+        stats["albums"] = db.query(Album).count()
     finally:
         db.close()
 
@@ -171,8 +204,8 @@ def main():
     print(f"Importing {xml_path} ...")
     stats = import_library(xml_path)
     print("Done.")
-    for k, v in stats.items():
-        print(f"  {k}: {v}")
+    for key, value in stats.items():
+        print(f"  {key}: {value}")
 
 
 if __name__ == "__main__":

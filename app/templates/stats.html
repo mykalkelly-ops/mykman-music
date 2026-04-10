@@ -3,24 +3,30 @@
 <h1>Stats</h1>
 
 <div>
-  <div class="stat"><div class="num">{{ total_songs_in_lib }}</div><div class="label">Songs Listened</div></div>
-  <div class="stat"><div class="num">{{ total_liked }}</div><div class="label">Liked (In Playlists)</div></div>
-  <div class="stat"><div class="num">{{ total_comparisons }}</div><div class="label">Comparisons</div></div>
+  <a class="stat" href="/listening-notes"><div class="num">{{ total_songs_in_lib }}</div><div class="label">Songs Listened</div></a>
+  <a class="stat" href="/songs"><div class="num">{{ total_liked }}</div><div class="label">Songs Liked</div></a>
+  <a class="stat" href="/songs"><div class="num">{{ progress.percent }}%</div><div class="label">Ranking Progress</div></a>
+  {% if request.state.is_admin %}
+  <a class="stat" href="/comparisons"><div class="num">{{ total_comparisons }}</div><div class="label">Comparisons</div></a>
+  {% endif %}
 </div>
+
+<p style="color:#888; font-size:0.85rem;">Estimated progress toward a stable ranking: {{ progress.completed }} of about {{ progress.target }} useful comparisons across {{ progress.unique_liked }} unique liked songs.</p>
 
 <h2>Liked songs by genre</h2>
 <table><thead><tr><th>Genre</th><th>Count</th></tr></thead><tbody>
-{% for k, v in by_genre %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
+{% for k, v in by_genre %}<tr><td><a href="/songs?q={{ k | urlencode }}">{{ k }}</a></td><td>{{ v }}</td></tr>{% endfor %}
 </tbody></table>
 
 <h2>Liked songs by decade</h2>
 <table><thead><tr><th>Decade</th><th>Count</th></tr></thead><tbody>
-{% for k, v in by_decade %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
+{% for k, v in by_decade %}<tr><td><a href="/songs?q={{ k[:4] }}">{{ k }}</a></td><td>{{ v }}</td></tr>{% endfor %}
 </tbody></table>
 
-<h2>Liked songs by artist gender</h2>
-<table><thead><tr><th>Gender</th><th>Count</th></tr></thead><tbody>
-{% for k, v in by_gender %}<tr><td>{{ k }}</td><td>{{ v }}</td></tr>{% endfor %}
+<h2>Rated songs by person gender</h2>
+<p style="color:#888; font-size:0.85rem;">Derived from song credits -> artist memberships -> person.gender. "mixed" means two or more distinct genders among credited acts.</p>
+<table><thead><tr><th>Category</th><th>Count</th><th>Avg Rating</th></tr></thead><tbody>
+{% for cat, count, avg in by_gender %}<tr><td>{{ cat }}</td><td>{{ count }}</td><td>{{ "%.0f"|format(avg) if count else "" }}</td></tr>{% endfor %}
 </tbody></table>
 
 <h2>Monthly playlists by average rating</h2>

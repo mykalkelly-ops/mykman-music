@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Comparison History</h1>
+<p style="color:#888">Most recent 500 comparisons.</p>
+<table>
+  <thead><tr><th>When</th><th>Left</th><th>Right</th><th>Winner</th><th>Difficulty</th><th>Nostalgia</th></tr></thead>
+  <tbody>
+    {% for it in items %}
+    <tr>
+      <td>{{ it.created_at.strftime("%Y-%m-%d %H:%M") if it.created_at else "" }}</td>
+      <td>{% if it.a %}<a href="/songs/{{ it.a.id }}">{{ it.a.title }}</a> · {{ it.a.album.artist.name }}{% endif %}</td>
+      <td>{% if it.b %}<a href="/songs/{{ it.b.id }}">{{ it.b.title }}</a> · {{ it.b.album.artist.name }}{% endif %}</td>
+      <td>
+        {% if it.winner %}
+          <a href="/songs/{{ it.winner.id }}">{{ it.winner.title }}</a>
+        {% else %}
+          Tie / Skip
+        {% endif %}
+      </td>
+      <td>{{ it.difficulty or "normal" }}</td>
+      <td>{{ "yes" if it.nostalgia else "no" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

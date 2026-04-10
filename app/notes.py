@@ -12,37 +12,74 @@ def render_markdown(text: str) -> str:
 def resolve_target(db: Session, target_type: str, target_id: int | None) -> dict:
     """Return a display-friendly dict describing what a note is attached to."""
     if target_type == "general" or target_id is None:
-        return {"type": "general", "label": "General update", "sublabel": ""}
+        return {"type": "general", "label": "General update", "sublabel": "", "url": None}
     if target_type == "song":
-        s = db.get(Song, target_id)
-        if not s:
-            return {"type": "song", "label": f"[deleted song {target_id}]", "sublabel": ""}
+        song = db.get(Song, target_id)
+        if not song:
+            return {"type": "song", "label": f"[deleted song {target_id}]", "sublabel": "", "url": None}
         return {
             "type": "song",
-            "label": s.title,
-            "sublabel": f"{s.album.artist.name} · {s.album.title}" if s.album else "",
+            "label": song.title,
+            "sublabel": f"{song.album.artist.name} · {song.album.title}" if song.album else "",
+            "url": f"/songs/{song.id}",
         }
     if target_type == "album":
-        a = db.get(Album, target_id)
-        if not a:
-            return {"type": "album", "label": f"[deleted album {target_id}]", "sublabel": ""}
-        return {"type": "album", "label": a.title, "sublabel": a.artist.name if a.artist else ""}
+        album = db.get(Album, target_id)
+        if not album:
+            return {"type": "album", "label": f"[deleted album {target_id}]", "sublabel": "", "url": None}
+        return {
+            "type": "album",
+            "label": album.title,
+            "sublabel": album.artist.name if album.artist else "",
+            "url": f"/albums/{album.id}",
+        }
     if target_type == "artist":
-        ar = db.get(Artist, target_id)
-        if not ar:
-            return {"type": "artist", "label": f"[deleted artist {target_id}]", "sublabel": ""}
-        return {"type": "artist", "label": ar.name, "sublabel": ""}
-    return {"type": target_type, "label": "?", "sublabel": ""}
+        artist = db.get(Artist, target_id)
+        if not artist:
+            return {"type": "artist", "label": f"[deleted artist {target_id}]", "sublabel": "", "url": None}
+        return {"type": "artist", "label": artist.name, "sublabel": "", "url": f"/artists/{artist.id}"}
+    return {"type": target_type, "label": "?", "sublabel": "", "url": None}
 
 
 def search_targets(db: Session, q: str, limit: int = 8) -> list[dict]:
     """Search songs, albums, and artists by name for target pickers."""
     like = f"%{q}%"
     results: list[dict] = []
-    for ar in db.query(Artist).filter(Artist.name.ilike(like)).limit(limit).all():
-        results.append({"type": "artist", "id": ar.id, "label": ar.name, "sublabel": ""})
-    for al in db.query(Album).join(Artist).filter(Album.title.ilike(like)).limit(limit).all():
-        results.append({"type": "album", "id": al.id, "label": al.title, "sublabel": al.artist.name})
-    for s in db.query(Song).join(Album).join(Artist).filter(Song.title.ilike(like)).limit(limit).all():
-        results.append({"type": "song", "id": s.id, "label": s.title, "sublabel": f"{s.album.artist.name} · {s.album.title}"})
+    for artist in db.query(Artist).filter(Artist.name.ilike(like)).limit(limit).all():
+        results.append({"type": "artist", "id": artist.id, "label": artist.name, "sublabel": ""})
+    for album in db.query(Album).join(Artist).filter(Album.title.ilike(like)).limit(limit).all():
+        results.append({"type": "album", "id": album.id, "label": album.title, "sublabel": album.artist.name})
+    for song in db.query(Song).join(Album).join(Artist).filter(Song.title.ilike(like)).limit(limit).all():
+        results.append(
+            {
+                "type": "song",
+                "id": song.id,
+                "label": song.title,
+                "sublabel": f"{song.album.artist.name} · {song.album.title}",
+            }
+        )
     return results[: limit * 2]
+
+
+def search_notes(db: Session, q: str, limit: int = 12) -> list[dict]:
+    """Search thoughts by title/body for hyperlinking drafts and published posts."""
+    like = f"%{q}%"
+    rows = (
+        db.query(Note)
+        .filter((Note.title.ilike(like)) | (Note.body.ilike(like)))
+        .order_by(Note.updated_at.desc(), Note.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    items: list[dict] = []
+    for note in rows:
+        title = (note.title or "").strip() or "Untitled thought"
+        items.append(
+            {
+                "id": note.id,
+                "title": title,
+                "status": note.status or "published",
+                "url": f"/thoughts/{note.id}",
+            }
+        )
+    return items

@@ -2,39 +2,54 @@
 {% block content %}
 <h1>MYKMAN Music</h1>
 
-{% if review_songs or review_albums or review_artists %}
-<section style="background:#1a1a1a; border:1px solid #2a2a2a; border-radius:8px; padding:1rem 1.25rem; margin-bottom:1.25rem;">
+<section class="panel" style="padding:1rem 1.25rem; margin-bottom:1.25rem;">
+  <h2 style="margin-top:0;">Bio</h2>
+  <p style="color:#888; margin-top:0;">A living memoir through music and data. The numbers are public. The writing is the interior.</p>
+  <p style="margin-bottom:0;">
+    {% if why_note %}
+      <a href="/thoughts/{{ why_note.id }}">why i am doing this project</a>
+      {% if request.state.is_admin and why_note.status == "draft" %}<span style="color:#888;"> (draft)</span>{% endif %}
+    {% elif request.state.is_admin %}
+      <a href="/notes/new?target_type=general">start the “why i am doing this project” essay</a>
+    {% else %}
+      <span style="color:#888;">the “why i am doing this project” essay is still unwritten.</span>
+    {% endif %}
+  </p>
+</section>
+
+{% if request.state.is_admin and (review_songs or review_albums or review_artists) %}
+<section class="panel" style="padding:1rem 1.25rem; margin-bottom:1.25rem;">
   <h2 style="margin-top:0;">Write a review</h2>
   <p style="color:#888; margin-top:0;">You've rated these high enough to love them. Tell us why.</p>
   {% if review_songs %}
-  <h3 style="margin-bottom:0.25rem;">Songs</h3>
+  <h3 style="margin-bottom:0.25rem;"><a href="/songs">Songs</a></h3>
   <ul style="margin:0.25rem 0 0.75rem 1rem;">
     {% for s in review_songs %}
     <li>
       <a href="/notes/new?target_type=song&target_id={{ s.id }}"><strong>{{ s.title }}</strong></a>
-      <span style="color:#888">— {{ s.artist }} · {{ s.album }} · {{ "%.0f"|format(s.rating) }}</span>
+      <span style="color:#888">- {{ s.artist }} · {{ s.album }} · {{ "%.0f"|format(s.rating) }}</span>
     </li>
     {% endfor %}
   </ul>
   {% endif %}
   {% if review_albums %}
-  <h3 style="margin-bottom:0.25rem;">Albums</h3>
+  <h3 style="margin-bottom:0.25rem;"><a href="/albums">Albums</a></h3>
   <ul style="margin:0.25rem 0 0.75rem 1rem;">
     {% for a in review_albums %}
     <li>
       <a href="/notes/new?target_type=album&target_id={{ a.id }}"><strong>{{ a.title }}</strong></a>
-      <span style="color:#888">— {{ a.artist }} · {{ "%.0f"|format(a.score) }}</span>
+      <span style="color:#888">- {{ a.artist }} · {{ "%.0f"|format(a.score) }}</span>
     </li>
     {% endfor %}
   </ul>
   {% endif %}
   {% if review_artists %}
-  <h3 style="margin-bottom:0.25rem;">Artists</h3>
+  <h3 style="margin-bottom:0.25rem;"><a href="/artists">Artists</a></h3>
   <ul style="margin:0.25rem 0 0.75rem 1rem;">
     {% for a in review_artists %}
     <li>
       <a href="/notes/new?target_type=artist&target_id={{ a.id }}"><strong>{{ a.name }}</strong></a>
-      <span style="color:#888">— {{ "%.0f"|format(a.score) }} · {{ a.liked_songs }} liked songs</span>
+      <span style="color:#888">- {{ "%.0f"|format(a.score) }} · {{ a.liked_songs }} liked songs</span>
     </li>
     {% endfor %}
   </ul>
@@ -42,26 +57,81 @@
 </section>
 {% endif %}
 
-<h2>Library</h2>
-<div>
-  <div class="stat"><div class="num">{{ total_songs }}</div><div class="label">Songs</div></div>
-  <div class="stat"><div class="num">{{ total_artists }}</div><div class="label">Artists</div></div>
-  <div class="stat"><div class="num">{{ total_albums }}</div><div class="label">Albums</div></div>
-  <div class="stat"><div class="num">{{ total_playlists }}</div><div class="label">Monthly Playlists</div></div>
-  <div class="stat"><div class="num">{{ total_playlist_songs }}</div><div class="label">Playlist Entries</div></div>
-</div>
+{% if request.state.is_admin %}
+<section class="panel" style="padding:1rem 1.25rem; margin-bottom:1.25rem;">
+  <h2 style="margin-top:0;">Admin queue</h2>
+  <p style="color:#888; margin-top:0;">A few unglamorous things that keep the archive honest and safe.</p>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+    <a class="stat" href="/album-queue"><div class="num">{{ album_queue_count }}</div><div class="label">Albums To Confirm</div></a>
+    <a class="stat" href="/safety"><div class="num">{{ backup_count }}</div><div class="label">Snapshots</div></a>
+  </div>
+</section>
 
-<h2>Monthly Playlists</h2>
+<section class="panel" style="padding:1rem 1.25rem; margin-bottom:1.25rem;">
+  <h2 style="margin-top:0;">MusicBrainz Enrichment</h2>
+  <p style="color:#888; margin-top:0;">Fetches artist metadata, band members, album cover art, and artist photos. Runs in the background at ~1 req/sec.</p>
+  <button id="enrich-btn" onclick="startEnrich()">Bulk enrich all</button>
+  <div id="enrich-progress" style="margin-top:0.75rem; color:#ccc;"></div>
+</section>
+<script>
+async function startEnrich() {
+  const btn = document.getElementById('enrich-btn');
+  btn.disabled = true;
+  await fetch('/api/enrich-all', {method:'POST'});
+  pollEnrich();
+}
+async function pollEnrich() {
+  const el = document.getElementById('enrich-progress');
+  try {
+    const r = await fetch('/api/enrich-status');
+    const s = await r.json();
+    if (s.running || s.done > 0) {
+      el.textContent = `${s.done} / ${s.total} - ${s.current || ''}`;
+    }
+    if (s.running) setTimeout(pollEnrich, 2000);
+    else document.getElementById('enrich-btn').disabled = false;
+  } catch (e) { setTimeout(pollEnrich, 5000); }
+}
+pollEnrich();
+</script>
+{% endif %}
+
+<h2>Mykal has listened to...</h2>
+<div>
+  <a class="stat" href="/listening-notes"><div class="num">{{ total_songs }}</div><div class="label">Songs Listened</div></a>
+  <a class="stat" href="/songs"><div class="num">{{ total_playlist_songs }}</div><div class="label">Songs Liked</div></a>
+  <a class="stat" href="/stats"><div class="num">{{ progress.percent }}%</div><div class="label">Ranking Progress</div></a>
+  <a class="stat" href="/artists"><div class="num">{{ total_artists }}</div><div class="label">Artists</div></a>
+  <a class="stat" href="/albums"><div class="num">{{ total_albums }}</div><div class="label">Albums</div></a>
+  <a class="stat" href="/playlists/{{ playlists[0].id if playlists else '' }}"><div class="num">{{ total_playlists }}</div><div class="label">Monthly Playlists</div></a>
+</div>
+<p style="color:#888; font-size:0.85rem;">Ranking confidence is roughly {{ progress.percent }}% based on {{ progress.completed }} of an estimated {{ progress.target }} useful comparisons.</p>
+
+<h2>Recent MYK Thoughts</h2>
+{% if recent_notes %}
+<table>
+  <thead><tr><th>Title</th><th>Target</th><th>Posted</th><th>Comments</th></tr></thead>
+  <tbody>
+    {% for it in recent_notes %}
+    <tr>
+      <td><a href="/thoughts/{{ it.id }}">{{ it.title }}</a></td>
+      <td>{% if it.target.url %}<a href="{{ it.target.url }}">{{ it.target.label }}</a>{% else %}{{ it.target.label }}{% endif %}</td>
+      <td>{{ it.created_at.strftime("%Y-%m-%d") if it.created_at else "" }}</td>
+      <td>{{ it.comment_count }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:#888">No thoughts yet.</p>
+{% endif %}
+
+<h2><a href="/stats">Monthly playlists</a></h2>
 {% if playlists %}
 <table>
-  <thead><tr><th>Name</th><th>Year</th><th>Month</th></tr></thead>
   <tbody>
     {% for p in playlists %}
-    <tr>
-      <td><a href="/playlists/{{ p.id }}">{{ p.name }}</a></td>
-      <td>{{ p.year or "" }}</td>
-      <td>{{ p.month or "" }}</td>
-    </tr>
+    <tr><td><a href="/playlists/{{ p.id }}">{{ p.name }}</a></td></tr>
     {% endfor %}
   </tbody>
 </table>

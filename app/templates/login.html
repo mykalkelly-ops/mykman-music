@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Admin login</h1>
+<p style="color:#888">Only needed if you're Mykal. Everyone else can just browse.</p>
+{% if error %}<p style="color:#e66">Incorrect password.</p>{% endif %}
+<form method="post" action="/login" style="display:flex; gap:0.5rem; max-width:400px;">
+  <input type="password" name="password" placeholder="password" autofocus style="flex:1;">
+  <button type="submit">Login</button>
+</form>
+{% endblock %}

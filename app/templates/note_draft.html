@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<section style="max-width:680px; margin:2rem auto; text-align:center;">
+  <div style="font-family:'Caveat',cursive; font-size:4rem; color:var(--pink-hot); text-shadow:3px 3px 0 var(--sun);">
+    not finished yet ♥
+  </div>
+  <h1 style="margin-top:0.25rem;">{{ it.title or "Untitled draft" }}</h1>
+  <div style="color:var(--text-dim); font-size:0.9rem;">
+    <span style="text-transform:uppercase; letter-spacing:0.05em;">{{ it.target.type }}</span>
+    {% if it.target.label %}&middot; <strong>{{ it.target.label }}</strong>{% endif %}
+    &middot; {{ it.created_at.strftime("%Y-%m-%d") if it.created_at else "" }}
+  </div>
+
+  {% if it.teaser %}
+  <p style="margin-top:1.5rem; font-size:1.05rem; line-height:1.6; color:var(--text); text-align:left;">
+    {{ it.teaser }}<span style="color:var(--text-dim);"> …</span>
+  </p>
+  {% endif %}
+
+  <p style="margin-top:1.5rem; font-family:'Caveat',cursive; font-size:1.6rem; color:var(--text-dim);">
+    sorry, i haven't finished this one yet.
+  </p>
+</section>
+{% endblock %}

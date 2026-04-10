@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Safety</h1>
+<p style="color:#888">This is the visible safety net: database snapshots, comparison-history export, and restore controls. Restore is real, so use it carefully and restart the server right after.</p>
+
+<div style="margin:1rem 0;">
+  <button type="button" onclick="snapshotNow()">Create snapshot now</button>
+  <a href="/api/safety/export-history"><button type="button">Export comparison history</button></a>
+</div>
+
+<div class="panel" style="padding:1rem; margin-bottom:1rem;">
+  <h2 style="margin-top:0;">Current state</h2>
+  <p style="margin-bottom:0;">Database present: {{ "yes" if db_exists else "no" }}</p>
+  <p style="margin-bottom:0;">Snapshots: {{ backups|length }}</p>
+  <p style="margin-bottom:0;">Comparison journal: {{ "present" if journal_exists else "missing" }}{% if journal_exists %} ({{ journal_size }} bytes){% endif %}</p>
+</div>
+
+<h2>Snapshots</h2>
+{% if backups %}
+<table>
+  <thead><tr><th>File</th><th>Modified</th><th>Size</th><th></th></tr></thead>
+  <tbody>
+    {% for b in backups %}
+    <tr>
+      <td>{{ b.name }}</td>
+      <td>{{ b.mtime.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+      <td>{{ b.size }}</td>
+      <td><button type="button" onclick="restoreBackup('{{ b.name }}')">Restore</button></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:#888">No snapshots yet.</p>
+{% endif %}
+
+<script>
+async function snapshotNow() {
+  const r = await fetch('/api/safety/snapshot', {method: 'POST'});
+  if (!r.ok) { alert('Snapshot failed'); return; }
+  location.reload();
+}
+async function restoreBackup(filename) {
+  if (!confirm(`Restore ${filename}? This will overwrite music.db and you should restart the server immediately after.`)) return;
+  const r = await fetch('/api/safety/restore', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({filename}),
+  });
+  const data = await r.json();
+  if (!r.ok) { alert(data.detail || 'Restore failed'); return; }
+  alert(data.message || 'Restored. Restart the server now.');
+  location.reload();
+}
+</script>
+{% endblock %}

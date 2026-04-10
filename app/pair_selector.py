@@ -13,6 +13,7 @@ Strategy:
   - 10% new-song priority (songs with very high RD / zero comparisons)
 """
 import random
+from collections import deque
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
@@ -20,6 +21,26 @@ from .models import Song, Album, PlaylistSong, Playlist
 from .placement import pick_placement_song, pick_opponent
 
 CANDIDATE_POOL = 60  # sample this many random songs, then score pairs
+
+# Anti-repeat: track recently shown song IDs (last ~4 comparisons = 8 songs)
+_RECENT_SONG_IDS: deque[int] = deque(maxlen=8)
+
+
+def note_recent_pair(song_a_id: int, song_b_id: int) -> None:
+    _RECENT_SONG_IDS.append(song_a_id)
+    _RECENT_SONG_IDS.append(song_b_id)
+
+
+def _recent_set() -> set[int]:
+    return set(_RECENT_SONG_IDS)
+
+
+def _filter_recent(songs: list[Song]) -> list[Song]:
+    recent = _recent_set()
+    if not recent:
+        return songs
+    filtered = [s for s in songs if s.id not in recent]
+    return filtered if len(filtered) >= 2 else songs
 
 
 def _score_pair(a: Song, b: Song) -> float:
@@ -50,12 +71,17 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
     if total_songs < 2:
         return None
 
-    # HIGHEST PRIORITY: finish any song still in binary-search placement.
-    # pick_opponent falls back to random opponents during cold-start
-    # (when there are no placed anchors yet).
+    # Binary-search placement: interleave so the same in-flight song doesn't
+    # appear back-to-back. Only honor placement priority if the candidate
+    # wasn't just shown; otherwise fall through to a normal pair this round.
     placement_song = pick_placement_song(db)
-    if placement_song is not None:
+    recent = _recent_set()
+    if placement_song is not None and placement_song.id not in recent:
         opponent = pick_opponent(db, placement_song)
+        attempts = 0
+        while opponent is not None and opponent.id in recent and attempts < 5:
+            opponent = pick_opponent(db, placement_song)
+            attempts += 1
         if opponent is not None:
             return (placement_song, opponent)
 
@@ -70,6 +96,7 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
             .limit(CANDIDATE_POOL)
             .all()
         )
+        candidates = _filter_recent(candidates)
         pair = _best_pair(candidates)
         if pair:
             return pair
@@ -81,6 +108,8 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
             pa, pb = random.sample(playlist_ids, 2)
             sa = _sample_songs_from_playlist(db, pa, CANDIDATE_POOL // 2)
             sb = _sample_songs_from_playlist(db, pb, CANDIDATE_POOL // 2)
+            sa = _filter_recent(sa)
+            sb = _filter_recent(sb)
             if sa and sb:
                 # best cross-pair by score
                 best = None
@@ -100,6 +129,7 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
         for _ in range(5):
             pid = random.choice(playlist_ids)
             songs = _sample_songs_from_playlist(db, pid, CANDIDATE_POOL)
+            songs = _filter_recent(songs)
             pair = _best_pair(songs)
             if pair:
                 return pair
@@ -112,6 +142,7 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
         .limit(CANDIDATE_POOL)
         .all()
     )
+    candidates = _filter_recent(candidates)
     return _best_pair(candidates)
 
 

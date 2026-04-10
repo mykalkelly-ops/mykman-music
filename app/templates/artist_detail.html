@@ -1,10 +1,27 @@
 {% extends "base.html" %}
 {% block content %}
-<div style="color:#888; font-size:0.85rem;">ARTIST</div>
-<h1 style="margin:0.25rem 0 0.5rem 0;">{{ artist.name }}</h1>
-<div style="color:#bbb;">
-  {{ artist.gender or "Unknown" }}{% if artist.is_band %} · Band{% endif %}
-  {% if artist.country %} · {{ artist.country }}{% endif %}
+<div style="display:flex; gap:1rem; align-items:center;">
+  {% if artist.image_path %}
+    <img src="/art/{{ artist.image_path }}" alt="" style="width:140px; height:140px; object-fit:cover; border-radius:8px; background:#222;">
+  {% else %}
+    <div style="width:140px; height:140px; border-radius:8px; background:#222; display:flex; align-items:center; justify-content:center; font-size:2.5rem; color:#555; font-weight:600;">
+      {{ (artist.name[:2]|upper) if artist.name else "?" }}
+    </div>
+  {% endif %}
+  <div>
+    <div style="color:#888; font-size:0.85rem;">ARTIST</div>
+    <h1 style="margin:0.25rem 0 0.5rem 0;">{{ artist.name }}</h1>
+    <div style="color:#bbb;">
+      Kind: {{ artist.kind or "unset" }}
+      {% if artist.country %} · {{ artist.country }}{% endif %}
+      {% if artist.start_year %} · {{ artist.start_year }}{% if artist.end_year %}–{{ artist.end_year }}{% else %}–{% endif %}{% endif %}
+    </div>
+    {% if artist.disambiguation %}<div style="color:#888; font-size:0.85rem;">{{ artist.disambiguation }}</div>{% endif %}
+    {% if is_admin %}
+      <button id="enrich-btn" style="margin-top:0.5rem;">Enrich from MusicBrainz</button>
+      <span id="enrich-status" style="color:#888; font-size:0.85rem; margin-left:0.5rem;"></span>
+    {% endif %}
+  </div>
 </div>
 
 <h2>Albums</h2>
@@ -21,6 +38,150 @@
     {% endfor %}
   </tbody>
 </table>
+
+<h2>Members / Acts</h2>
+<table>
+  <thead><tr><th>Name</th><th>Type</th><th>Role</th><th>Gender</th>{% if is_admin %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for m in members %}
+    <tr>
+      <td>{% if m.link %}<a href="{{ m.link }}">{{ m.name }}</a>{% else %}{{ m.name }}{% endif %}</td>
+      <td>{{ m.kind }}</td>
+      <td>{{ m.role }}</td>
+      <td>{{ m.gender or "" }}</td>
+      {% if is_admin %}<td><button class="rm-member" data-mid="{{ m.id }}">Remove</button></td>{% endif %}
+    </tr>
+    {% endfor %}
+    {% if not members %}<tr><td colspan="5" style="color:#666;">No members yet.</td></tr>{% endif %}
+  </tbody>
+</table>
+
+{% if related_acts %}
+<h2>Related acts</h2>
+<ul>
+  {% for r in related_acts %}
+  <li><a href="/artists/{{ r.id }}">{{ r.name }}</a></li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if is_admin %}
+<h2>Edit act</h2>
+<div style="background:#1a1a1a; padding:1rem; border-radius:8px;">
+  <div>
+    <label>Kind:
+      <select id="kind-sel">
+        <option value="solo" {% if artist.kind == "solo" %}selected{% endif %}>solo</option>
+        <option value="group" {% if artist.kind == "group" %}selected{% endif %}>group</option>
+        <option value="collab" {% if artist.kind == "collab" %}selected{% endif %}>collab</option>
+      </select>
+    </label>
+    <button id="save-kind">Save kind</button>
+  </div>
+
+  <h3>Add member</h3>
+  <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:end;">
+    <div>
+      <div style="font-size:0.85rem; color:#888;">Existing person (search)</div>
+      <input id="person-q" placeholder="search persons" autocomplete="off" />
+      <div id="person-results" style="font-size:0.85rem;"></div>
+    </div>
+    <div>
+      <div style="font-size:0.85rem; color:#888;">Or new person</div>
+      <input id="new-person" placeholder="new person name" />
+      <select id="new-person-gender">
+        <option value="unknown">unknown</option>
+        <option value="male">male</option>
+        <option value="female">female</option>
+        <option value="nonbinary">nonbinary</option>
+      </select>
+      <button id="add-new-person">Add new person</button>
+    </div>
+    <div>
+      <div style="font-size:0.85rem; color:#888;">Or child act</div>
+      <input id="child-q" placeholder="search artists" autocomplete="off" />
+      <div id="child-results" style="font-size:0.85rem;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const ARTIST_ID = {{ artist.id }};
+
+document.getElementById('save-kind').onclick = async () => {
+  const kind = document.getElementById('kind-sel').value;
+  await fetch(`/api/artists/${ARTIST_ID}/kind`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({kind}),
+  });
+  location.reload();
+};
+
+for (const btn of document.querySelectorAll('.rm-member')) {
+  btn.onclick = async () => {
+    if (!confirm('Remove this member?')) return;
+    await fetch(`/api/artists/${ARTIST_ID}/members/${btn.dataset.mid}`, {method:'DELETE'});
+    location.reload();
+  };
+}
+
+async function searchPersons() {
+  const q = document.getElementById('person-q').value;
+  if (q.length < 1) { document.getElementById('person-results').innerHTML=''; return; }
+  const r = await fetch('/api/person-search?q=' + encodeURIComponent(q));
+  const data = await r.json();
+  const div = document.getElementById('person-results');
+  div.innerHTML = '';
+  for (const p of data.results) {
+    const b = document.createElement('button');
+    b.textContent = `${p.name} (${p.gender})`;
+    b.onclick = async () => {
+      await fetch(`/api/artists/${ARTIST_ID}/members`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({person_id: p.id}),
+      });
+      location.reload();
+    };
+    div.appendChild(b);
+  }
+}
+document.getElementById('person-q').oninput = searchPersons;
+
+document.getElementById('add-new-person').onclick = async () => {
+  const name = document.getElementById('new-person').value.trim();
+  const gender = document.getElementById('new-person-gender').value;
+  if (!name) return;
+  await fetch(`/api/artists/${ARTIST_ID}/members`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({person_name: name, person_gender: gender}),
+  });
+  location.reload();
+};
+
+async function searchChildren() {
+  const q = document.getElementById('child-q').value;
+  if (q.length < 1) { document.getElementById('child-results').innerHTML=''; return; }
+  const r = await fetch('/api/artist-search?q=' + encodeURIComponent(q));
+  const data = await r.json();
+  const div = document.getElementById('child-results');
+  div.innerHTML = '';
+  for (const a of data.results) {
+    if (a.id === ARTIST_ID) continue;
+    const b = document.createElement('button');
+    b.textContent = a.name;
+    b.onclick = async () => {
+      await fetch(`/api/artists/${ARTIST_ID}/members`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({child_artist_id: a.id}),
+      });
+      location.reload();
+    };
+    div.appendChild(b);
+  }
+}
+document.getElementById('child-q').oninput = searchChildren;
+</script>
+{% endif %}
 
 {% with target_type='artist', target_id=artist.id %}{% include "_notes_block.html" %}{% endwith %}
 {% endblock %}

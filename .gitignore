@@ -1,6 +1,6 @@
 .venv/
 __pycache__/
 *.pyc
-data/*.db
-data/*.xml
+data/
+app/static/img/myk-source.png
 .DS_Store

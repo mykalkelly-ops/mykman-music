@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Moderation</h1>
+<p style="color:#888">Approve or delete public comments before they appear on MYK Thoughts.</p>
+
+{% if not items %}
+<p style="color:#888">No pending comments.</p>
+{% else %}
+<table>
+  <thead><tr><th>Author</th><th>Comment</th><th>On</th><th>Submitted</th><th>Actions</th></tr></thead>
+  <tbody>
+    {% for it in items %}
+    <tr>
+      <td>{{ it.author_name }}</td>
+      <td style="white-space:pre-wrap; max-width:420px;">{{ it.body }}</td>
+      <td>
+        <a href="/thoughts/{{ it.note_id }}">{{ it.note_title }}</a>
+        {% if it.target.url %}<div style="color:#888; font-size:0.8rem;"><a href="{{ it.target.url }}">{{ it.target.label }}</a></div>{% endif %}
+      </td>
+      <td>{{ it.created_at.strftime("%Y-%m-%d %H:%M") if it.created_at else "" }}</td>
+      <td>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+          <button type="button" onclick="approveComment({{ it.id }})">Approve</button>
+          <button type="button" onclick="delComment({{ it.id }})">Delete</button>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<script>
+async function approveComment(id) {
+  const r = await fetch('/api/comments/' + id + '/approve', {method:'POST'});
+  if (r.ok) location.reload();
+}
+async function delComment(id) {
+  if (!confirm('Delete this comment?')) return;
+  const r = await fetch('/api/comments/' + id, {method:'DELETE'});
+  if (r.ok) location.reload();
+}
+</script>
+{% endblock %}

@@ -13,13 +13,72 @@
 <div style="margin-top:1rem;">
   <div class="stat"><div class="num">{{ "%.0f"|format(song.glicko_rating) }}</div><div class="label">Rating</div></div>
   <div class="stat"><div class="num">{{ "%.0f"|format(song.glicko_rd) }}</div><div class="label">RD</div></div>
-  <div class="stat"><div class="num">{{ "*" * stars if stars else "—" }}</div><div class="label">Stars</div></div>
+  <div class="stat"><div class="num">{{ render_myks(stars)|safe }}</div><div class="label">MYKs</div></div>
   <div class="stat"><div class="num">{{ song.comparison_count }}</div><div class="label">Comparisons</div></div>
+</div>
+
+<div style="margin-top:1rem; display:flex; gap:0.6rem; flex-wrap:wrap;">
+  <a href="{{ external_links.spotify }}" target="_blank" rel="noopener"><button type="button">Spotify</button></a>
+  <a href="{{ external_links.apple_music }}" target="_blank" rel="noopener"><button type="button">Apple Music</button></a>
+  <a href="{{ external_links.youtube }}" target="_blank" rel="noopener"><button type="button">YouTube</button></a>
 </div>
 
 {% if playlists %}
 <h2>In playlists</h2>
 <ul>{% for p in playlists %}<li><a href="/playlists/{{ p.id }}">{{ p.name }}</a></li>{% endfor %}</ul>
+{% endif %}
+
+{% if linked_songs %}
+<h2>Same song as...</h2>
+<ul>
+  {% for ls in linked_songs %}
+  <li>
+    <a href="/songs/{{ ls.id }}">{{ ls.title }}</a>
+    <span style="color:#888;">- {{ ls.album.artist.name }} · {{ ls.album.title }}</span>
+    {% if request.state.is_admin %}
+    <button type="button" onclick="removeSongLink({{ ls.id }})">Unlink</button>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if request.state.is_admin %}
+<section class="panel" style="padding:1rem; margin-top:1rem;">
+  <h2 style="margin-top:0;">Link duplicate release</h2>
+  <p style="color:#888; margin-top:0;">Use this when a single and an album version are the same song. They stay separate for song rankings, but counts and artist aggregation stop getting inflated.</p>
+  <input id="song-link-q" placeholder="search song title / album / artist">
+  <div id="song-link-results" style="margin-top:0.35rem;"></div>
+</section>
+<script>
+async function searchSongLinks() {
+  const q = document.getElementById('song-link-q').value.trim();
+  const box = document.getElementById('song-link-results');
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  const r = await fetch('/api/song-search?q=' + encodeURIComponent(q));
+  const data = await r.json();
+  box.innerHTML = data.results
+    .filter(s => s.id !== {{ song.id }})
+    .map(s => `<div class="song-link-res" data-id="${s.id}" style="padding:0.45rem 0.6rem; background:#1a1a1a; margin-top:0.2rem; cursor:pointer; border-radius:4px;"><strong>${s.title}</strong> <span style="color:#888;">- ${s.artist} · ${s.album}</span></div>`)
+    .join('');
+  for (const el of box.querySelectorAll('.song-link-res')) {
+    el.onclick = async () => {
+      await fetch('/api/songs/{{ song.id }}/links', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({other_song_id: Number(el.dataset.id)})
+      });
+      location.reload();
+    };
+  }
+}
+async function removeSongLink(otherSongId) {
+  if (!confirm('Unlink these releases?')) return;
+  await fetch(`/api/songs/{{ song.id }}/links/${otherSongId}`, {method:'DELETE'});
+  location.reload();
+}
+document.getElementById('song-link-q').addEventListener('input', searchSongLinks);
+</script>
 {% endif %}
 
 {% with target_type='song', target_id=song.id %}{% include "_notes_block.html" %}{% endwith %}
