@@ -17,10 +17,12 @@ from collections import deque
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from .models import Song, Album, PlaylistSong, Playlist
+from .models import Song, Album, PlaylistSong, Playlist, Comparison
 from .placement import pick_placement_song, pick_opponent
 
 CANDIDATE_POOL = 60  # sample this many random songs, then score pairs
+RECENT_SONG_HISTORY = 8
+RECENT_PAIR_HISTORY = 40
 
 # Anti-repeat: track recently shown song IDs (last ~4 comparisons = 8 songs)
 _RECENT_SONG_IDS: deque[int] = deque(maxlen=8)
@@ -45,8 +47,32 @@ def _recent_pairs() -> set[tuple[int, int]]:
     return set(_RECENT_PAIR_KEYS)
 
 
-def _filter_recent(songs: list[Song]) -> list[Song]:
-    recent = _recent_set()
+def _db_recent_rows(db: Session, limit: int) -> list[tuple[int, int]]:
+    rows = (
+        db.query(Comparison.song_a_id, Comparison.song_b_id)
+        .order_by(Comparison.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [(int(a), int(b)) for a, b in rows]
+
+
+def _combined_recent_songs(db: Session) -> set[int]:
+    recent = set(_recent_set())
+    for a_id, b_id in _db_recent_rows(db, RECENT_SONG_HISTORY):
+        recent.add(a_id)
+        recent.add(b_id)
+    return recent
+
+
+def _combined_recent_pairs(db: Session) -> set[tuple[int, int]]:
+    recent = set(_recent_pairs())
+    for a_id, b_id in _db_recent_rows(db, RECENT_PAIR_HISTORY):
+        recent.add(_pair_key(a_id, b_id))
+    return recent
+
+
+def _filter_recent(songs: list[Song], recent: set[int]) -> list[Song]:
     if not recent:
         return songs
     filtered = [s for s in songs if s.id not in recent]
@@ -61,12 +87,12 @@ def _score_pair(a: Song, b: Song) -> float:
     return (rd_sum / 700.0) * 0.5 + max(0.0, 1.0 - rating_diff / 400.0) * 0.3 + freshness * 0.2
 
 
-def _best_pair(songs: list[Song]) -> tuple[Song, Song] | None:
+def _best_pair(songs: list[Song], recent_pairs: set[tuple[int, int]] | None = None) -> tuple[Song, Song] | None:
     if len(songs) < 2:
         return None
     best = None
     best_score = -1.0
-    recent_pairs = _recent_pairs()
+    recent_pairs = recent_pairs or set()
     # O(n^2) is fine for n<=60
     for i in range(len(songs)):
         for j in range(i + 1, len(songs)):
@@ -93,15 +119,16 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
     if total_songs < 2:
         return None
 
+    recent = _combined_recent_songs(db)
+    recent_pairs = _combined_recent_pairs(db)
+
     # Binary-search placement: interleave so the same in-flight song doesn't
     # appear back-to-back. Only honor placement priority if the candidate
     # wasn't just shown; otherwise fall through to a normal pair this round.
     placement_song = pick_placement_song(db)
-    recent = _recent_set()
     if placement_song is not None and placement_song.id not in recent:
         opponent = pick_opponent(db, placement_song)
         attempts = 0
-        recent_pairs = _recent_pairs()
         while (
             opponent is not None
             and (opponent.id in recent or _pair_key(placement_song.id, opponent.id) in recent_pairs)
@@ -127,8 +154,8 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
             .limit(CANDIDATE_POOL)
             .all()
         )
-        candidates = _filter_recent(candidates)
-        pair = _best_pair(candidates)
+        candidates = _filter_recent(candidates, recent)
+        pair = _best_pair(candidates, recent_pairs)
         if pair:
             return pair
 
@@ -139,14 +166,16 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
             pa, pb = random.sample(playlist_ids, 2)
             sa = _sample_songs_from_playlist(db, pa, CANDIDATE_POOL // 2)
             sb = _sample_songs_from_playlist(db, pb, CANDIDATE_POOL // 2)
-            sa = _filter_recent(sa)
-            sb = _filter_recent(sb)
+            sa = _filter_recent(sa, recent)
+            sb = _filter_recent(sb, recent)
             if sa and sb:
                 # best cross-pair by score
                 best = None
                 best_score = -1.0
                 for x in sa:
                     for y in sb:
+                        if _pair_key(x.id, y.id) in recent_pairs:
+                            continue
                         s = _score_pair(x, y)
                         if s > best_score:
                             best_score = s
@@ -160,8 +189,8 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
         for _ in range(5):
             pid = random.choice(playlist_ids)
             songs = _sample_songs_from_playlist(db, pid, CANDIDATE_POOL)
-            songs = _filter_recent(songs)
-            pair = _best_pair(songs)
+            songs = _filter_recent(songs, recent)
+            pair = _best_pair(songs, recent_pairs)
             if pair:
                 return pair
 
@@ -173,8 +202,8 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
         .limit(CANDIDATE_POOL)
         .all()
     )
-    candidates = _filter_recent(candidates)
-    return _best_pair(candidates)
+    candidates = _filter_recent(candidates, recent)
+    return _best_pair(candidates, recent_pairs)
 
 
 def _sample_songs_from_playlist(db: Session, playlist_id: int, n: int) -> list[Song]:

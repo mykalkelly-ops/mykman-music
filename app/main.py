@@ -1502,19 +1502,21 @@ def next_pairs(n: int = 4, db: Session = Depends(get_session)):
     n = max(1, min(int(n), 8))
     pairs = []
     seen_ids: set[int] = set()
-    for _ in range(n):
+    seen_pairs: set[tuple[int, int]] = set()
+    attempts = 0
+    max_attempts = max(12, n * 8)
+    while len(pairs) < n and attempts < max_attempts:
+        attempts += 1
         p = pick_pair(db)
         if p is None:
             break
         a, b = p
-        # Avoid the same song appearing twice within one batch
-        if a.id in seen_ids or b.id in seen_ids:
-            # try once more
-            p2 = pick_pair(db)
-            if p2 is None:
-                break
-            a, b = p2
+        pair_key = tuple(sorted((a.id, b.id)))
+        # Avoid the same song or same exact pair appearing twice within one batch
+        if a.id in seen_ids or b.id in seen_ids or pair_key in seen_pairs:
+            continue
         seen_ids.add(a.id); seen_ids.add(b.id)
+        seen_pairs.add(pair_key)
         note_recent_pair(a.id, b.id)
         pairs.append({"a": _song_payload(a), "b": _song_payload(b)})
     total_comparisons = db.query(func.count(Comparison.id)).scalar() or 0
