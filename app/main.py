@@ -29,7 +29,7 @@ from .auth import (
 from .glicko import update_pair
 from .pair_selector import pick_pair, note_recent_pair
 from .placement import update_bounds, maybe_finalize
-from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown
+from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album
 from .notes import render_markdown, resolve_target, search_notes, search_targets
 from .canonical import canonical_key, unique_liked_song_count, progress_metrics, linked_song_groups
 from .genres import normalize_genre
@@ -542,6 +542,7 @@ def album_detail(album_id: int, request: Request, db: Session = Depends(get_sess
             "songs": songs_sorted,
             "star_tier": myk_tier,
             "render_myks": render_myks,
+            "is_rankable_album": is_rankable_album,
             "notes": _notes_for(db, request, "album", album_id),
         },
     )
@@ -627,6 +628,10 @@ class AlbumDecisionBody(BaseModel):
     listened: bool
 
 
+class AlbumMetaBody(BaseModel):
+    total_track_count: int | None = None
+
+
 @app.post("/api/albums/{album_id}/listened")
 def set_album_listened(album_id: int, body: AlbumDecisionBody, request: Request, db: Session = Depends(get_session)):
     require_admin(request)
@@ -637,6 +642,24 @@ def set_album_listened(album_id: int, body: AlbumDecisionBody, request: Request,
     album.excluded_from_listened = not bool(body.listened)
     db.commit()
     return {"ok": True}
+
+
+@app.post("/api/albums/{album_id}/meta")
+def set_album_meta(album_id: int, body: AlbumMetaBody, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    album = db.get(Album, album_id)
+    if album is None:
+        raise HTTPException(404, "album not found")
+    total_track_count = body.total_track_count
+    if total_track_count is not None and total_track_count < 1:
+        total_track_count = None
+    album.total_track_count = total_track_count
+    db.commit()
+    return {
+        "ok": True,
+        "total_track_count": album.total_track_count,
+        "rankable": is_rankable_album(album),
+    }
 
 
 class SongLinkBody(BaseModel):

@@ -8,6 +8,26 @@
   {% if album.genre %}&middot; {{ album.genre }}{% endif %}
 </div>
 
+<div class="panel" style="margin-top:1rem;">
+  <div style="font-size:0.9rem; color:#7a5a88;">
+    Total tracks:
+    <strong id="album-total-label">{{ album.total_track_count if album.total_track_count else "?" }}</strong>
+    {% if not is_rankable_album(album) %}
+      <span style="margin-left:0.5rem; color:#d33d8f;">Excluded from album rankings as a single/short release</span>
+    {% endif %}
+  </div>
+  {% if request.state.is_admin %}
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.6rem; align-items:center;">
+      <input id="album-total-input" type="number" min="1" placeholder="Set total tracks" value="{{ album.total_track_count if album.total_track_count else '' }}" />
+      <button id="album-total-save" type="button">Save total</button>
+      <button id="album-total-clear" type="button">Clear</button>
+    </div>
+    <div style="font-size:0.82rem; color:#7a5a88; margin-top:0.45rem;">
+      If this stays unknown, the albums page shows a question mark instead of pretending the imported subset is the whole album.
+    </div>
+  {% endif %}
+</div>
+
 <h2>Songs</h2>
 <table>
   <thead><tr><th>#</th><th>MYKs</th><th>Title</th><th>Rating</th><th>RD</th><th>Cmps</th></tr></thead>
@@ -27,4 +47,30 @@
 </table>
 
 {% with target_type='album', target_id=album.id %}{% include "_notes_block.html" %}{% endwith %}
+
+{% if request.state.is_admin %}
+<script>
+async function saveAlbumTotal(totalValue) {
+  const resp = await fetch('/api/albums/{{ album.id }}/meta', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ total_track_count: totalValue }),
+  });
+  if (!resp.ok) {
+    alert('Could not save total track count.');
+    return;
+  }
+  window.location.reload();
+}
+
+document.getElementById('album-total-save')?.addEventListener('click', async () => {
+  const raw = document.getElementById('album-total-input').value;
+  await saveAlbumTotal(raw ? Number(raw) : null);
+});
+
+document.getElementById('album-total-clear')?.addEventListener('click', async () => {
+  await saveAlbumTotal(null);
+});
+</script>
+{% endif %}
 {% endblock %}

@@ -64,6 +64,16 @@ class AlbumScore:
     avg_rd: float
 
 
+def is_rankable_album(album: Album) -> bool:
+    title = (album.title or "").lower()
+    total_tracks = album.total_track_count or 0
+    if "single" in title:
+        return False
+    if total_tracks and total_tracks <= 3:
+        return False
+    return True
+
+
 @dataclass
 class ArtistScore:
     artist_id: int
@@ -85,6 +95,8 @@ def album_scores(db: Session) -> list[AlbumScore]:
     results: list[AlbumScore] = []
     albums = db.query(Album).all()
     for album in albums:
+        if not is_rankable_album(album):
+            continue
         songs = album.songs
         if not songs:
             continue
