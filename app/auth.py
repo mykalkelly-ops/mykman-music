@@ -19,11 +19,16 @@ _VALID_TOKENS: set[str] = set()
 
 
 def admin_password() -> str:
-    return os.environ.get(PASSWORD_ENV, DEFAULT_PASSWORD)
+    raw = os.environ.get(PASSWORD_ENV, DEFAULT_PASSWORD)
+    value = raw.strip()
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        value = value[1:-1]
+    return value
 
 
 def login(response: Response, password: str) -> bool:
-    if not secrets.compare_digest(password, admin_password()):
+    candidate = (password or "").strip()
+    if not secrets.compare_digest(candidate, admin_password()):
         return False
     token = secrets.token_urlsafe(32)
     _VALID_TOKENS.add(token)
