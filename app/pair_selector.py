@@ -109,7 +109,11 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
         ):
             opponent = pick_opponent(db, placement_song)
             attempts += 1
-        if opponent is not None:
+        if (
+            opponent is not None
+            and opponent.id not in recent
+            and _pair_key(placement_song.id, opponent.id) not in recent_pairs
+        ):
             return (placement_song, opponent)
 
     roll = random.random()
