@@ -8,15 +8,13 @@ import os
 import secrets
 from datetime import datetime, timedelta
 from fastapi import Request, HTTPException, Response
+from .db import SessionLocal
+from .models import AdminSession
 
 COOKIE_NAME = "mykman_admin"
 SUB_COOKIE_NAME = "mykman_sub"
 PASSWORD_ENV = "MYKMAN_ADMIN_PASSWORD"
 DEFAULT_PASSWORD = "changeme"  # only used if env var not set
-
-# In-memory token store (lost on restart; that's fine for a hobby app)
-_VALID_TOKENS: set[str] = set()
-
 
 def admin_password() -> str:
     raw = os.environ.get(PASSWORD_ENV, DEFAULT_PASSWORD)
@@ -31,7 +29,10 @@ def login(response: Response, password: str) -> bool:
     if not secrets.compare_digest(candidate, admin_password()):
         return False
     token = secrets.token_urlsafe(32)
-    _VALID_TOKENS.add(token)
+    expires_at = datetime.utcnow() + timedelta(days=30)
+    with SessionLocal() as db:
+        db.add(AdminSession(token=token, expires_at=expires_at))
+        db.commit()
     response.set_cookie(
         COOKIE_NAME, token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30
     )
@@ -41,13 +42,31 @@ def login(response: Response, password: str) -> bool:
 def logout(request: Request, response: Response) -> None:
     token = request.cookies.get(COOKIE_NAME)
     if token:
-        _VALID_TOKENS.discard(token)
+        with SessionLocal() as db:
+            row = db.query(AdminSession).filter(AdminSession.token == token).first()
+            if row is not None:
+                db.delete(row)
+                db.commit()
     response.delete_cookie(COOKIE_NAME)
 
 
 def is_admin(request: Request) -> bool:
     token = request.cookies.get(COOKIE_NAME)
-    return bool(token and token in _VALID_TOKENS)
+    if not token:
+        return False
+    with SessionLocal() as db:
+        now = datetime.utcnow()
+        try:
+            (
+                db.query(AdminSession)
+                .filter(AdminSession.expires_at < now)
+                .delete(synchronize_session=False)
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+        row = db.query(AdminSession).filter(AdminSession.token == token).first()
+        return bool(row and row.expires_at >= now)
 
 
 def require_admin(request: Request) -> None:

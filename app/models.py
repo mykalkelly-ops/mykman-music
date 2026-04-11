@@ -171,6 +171,14 @@ class Subscriber(Base):
     notes = Column(String, nullable=True)
 
 
+class AdminSession(Base):
+    __tablename__ = "admin_sessions"
+    id = Column(Integer, primary_key=True)
+    token = Column(String, unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+
+
 class Comparison(Base):
     __tablename__ = "comparisons"
     id = Column(Integer, primary_key=True)
@@ -274,6 +282,13 @@ def init_db(engine):
                 conn.execute(text("ALTER TABLE comparisons ADD COLUMN nostalgia BOOLEAN DEFAULT 0"))
         except Exception:
             pass
+        try:
+            insp.get_columns("admin_sessions")
+        except Exception:
+            try:
+                AdminSession.__table__.create(bind=conn)
+            except Exception:
+                pass
         try:
             insp.get_columns("song_links")
         except Exception:
