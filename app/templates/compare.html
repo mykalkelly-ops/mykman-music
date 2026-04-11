@@ -53,10 +53,27 @@
 </div>
 
 <script>
-const STICKY_KEY = 'mykman_queue';
+const STICKY_KEY = 'mykman_queue_v2';
 let queue = [];
 
+function pairKey(pair) {
+  return [pair.a.id, pair.b.id].sort((x, y) => x - y).join(':');
+}
+
+function dedupeQueue(items) {
+  const seen = new Set();
+  const out = [];
+  for (const pair of items || []) {
+    const key = pairKey(pair);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(pair);
+  }
+  return out;
+}
+
 function saveQueue() {
+  queue = dedupeQueue(queue);
   localStorage.setItem(STICKY_KEY, JSON.stringify(queue));
 }
 
@@ -180,7 +197,7 @@ async function loadQueue(forceNew = false) {
     const saved = localStorage.getItem(STICKY_KEY);
     if (saved) {
       try {
-        queue = JSON.parse(saved);
+        queue = dedupeQueue(JSON.parse(saved));
         if (queue.length && queue.some(p => !p.resolved)) {
           renderQueue();
           refreshCount();
@@ -196,7 +213,7 @@ async function loadQueue(forceNew = false) {
     return;
   }
   const data = await r.json();
-  queue = (data.pairs || []).map(p => ({ ...p, resolved: false, nostalgiaA: false, nostalgiaB: false, difficulty: null }));
+  queue = dedupeQueue((data.pairs || []).map(p => ({ ...p, resolved: false, nostalgiaA: false, nostalgiaB: false, difficulty: null })));
   saveQueue();
   document.getElementById('count').textContent = `${data.total_comparisons} comparisons so far`;
   renderQueue();
