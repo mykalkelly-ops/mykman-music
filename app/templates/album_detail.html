@@ -94,13 +94,21 @@ document.getElementById('album-enrich')?.addEventListener('click', async () => {
   button.disabled = true;
   if (status) status.textContent = 'fetching...';
   const resp = await fetch('/api/albums/{{ album.id }}/enrich', { method: 'POST' });
-  if (!resp.ok) {
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch (e) {}
+  if (!resp.ok || !data || !data.ok) {
     button.disabled = false;
-    if (status) status.textContent = '';
-    alert('Could not fetch the album tracklist right now.');
+    if (status) {
+      status.textContent =
+        data?.reason === 'no_release_match' ? 'no MusicBrainz release match found' :
+        data?.reason === 'no_tracklist_found' ? 'matched release but no tracklist was returned' :
+        'could not fetch the album tracklist';
+    }
     return;
   }
-  if (status) status.textContent = 'done';
+  if (status) status.textContent = `saved ${data.track_count || 0} tracks`;
   window.location.reload();
 });
 </script>

@@ -7,6 +7,7 @@ All network calls are wrapped in try/except and return None / [] / {} on failure
 import json
 import time
 import threading
+import re
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -71,34 +72,56 @@ def get_artist(mbid: str) -> dict | None:
 
 
 def search_release_group(artist_name: str, album_name: str) -> dict | None:
-    q = urllib.parse.quote(f'releasegroup:"{album_name}" AND artist:"{artist_name}"')
-    url = f"{MB_BASE}/release-group?query={q}&fmt=json&limit=5"
-    data = _get_json(url)
-    if not data:
-        return None
-    groups = data.get("release-groups") or []
-    if not groups:
-        return None
-    # Prefer primary-type Album, else first
-    for g in groups:
-        if (g.get("primary-type") or "").lower() == "album":
-            return g
-    return groups[0]
+    for title in _album_title_variants(album_name):
+        q = urllib.parse.quote(f'releasegroup:"{title}" AND artist:"{artist_name}"')
+        url = f"{MB_BASE}/release-group?query={q}&fmt=json&limit=5"
+        data = _get_json(url)
+        if not data:
+            continue
+        groups = data.get("release-groups") or []
+        if not groups:
+            continue
+        # Prefer album or EP, else first.
+        for primary_type in ("album", "ep"):
+            for g in groups:
+                if (g.get("primary-type") or "").lower() == primary_type:
+                    return g
+        return groups[0]
+    return None
 
 
 def search_release(artist_name: str, album_name: str) -> dict | None:
-    q = urllib.parse.quote(f'release:"{album_name}" AND artist:"{artist_name}"')
-    url = f"{MB_BASE}/release?query={q}&fmt=json&limit=10"
-    data = _get_json(url)
-    if not data:
-        return None
-    releases = data.get("releases") or []
-    if not releases:
-        return None
-    for release in releases:
-        if (release.get("status") or "").lower() in ("official", ""):
-            return release
-    return releases[0]
+    for title in _album_title_variants(album_name):
+        q = urllib.parse.quote(f'release:"{title}" AND artist:"{artist_name}"')
+        url = f"{MB_BASE}/release?query={q}&fmt=json&limit=10"
+        data = _get_json(url)
+        if not data:
+            continue
+        releases = data.get("releases") or []
+        if not releases:
+            continue
+        for release in releases:
+            if (release.get("status") or "").lower() in ("official", ""):
+                return release
+        return releases[0]
+    return None
+
+
+def _album_title_variants(album_name: str) -> list[str]:
+    value = (album_name or "").strip()
+    variants: list[str] = []
+
+    def add(v: str):
+        v = (v or "").strip()
+        if v and v not in variants:
+            variants.append(v)
+
+    add(value)
+    add(re.sub(r"\s*-\s*(EP|Single)\s*$", "", value, flags=re.I))
+    add(re.sub(r"\s*\((Deluxe|Deluxe Edition|Deluxe Version|Expanded|Remastered|Remaster|Bonus.*?|EP|Single)\)\s*$", "", value, flags=re.I))
+    add(re.sub(r"\s*\[(Deluxe|Deluxe Edition|Deluxe Version|Expanded|Remastered|Remaster|Bonus.*?|EP|Single)\]\s*$", "", value, flags=re.I))
+    add(re.sub(r"\s+(Deluxe|Deluxe Edition|Deluxe Version|Expanded|Remastered|Remaster)\s*$", "", value, flags=re.I))
+    return variants
 
 
 def get_release(mbid: str) -> dict | None:
