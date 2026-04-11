@@ -269,6 +269,11 @@ def healthz():
     return {"ok": True}
 
 
+@app.head("/", response_class=HTMLResponse)
+def index_head():
+    return HTMLResponse(status_code=200)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_session)):
     total_songs = _listened_song_count(db)
