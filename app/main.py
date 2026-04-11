@@ -264,6 +264,11 @@ def on_startup():
         db.close()
 
 
+@app.api_route("/healthz", methods=["GET", "HEAD"])
+def healthz():
+    return {"ok": True}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_session)):
     total_songs = _listened_song_count(db)
