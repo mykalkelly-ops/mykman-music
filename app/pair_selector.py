@@ -24,15 +24,25 @@ CANDIDATE_POOL = 60  # sample this many random songs, then score pairs
 
 # Anti-repeat: track recently shown song IDs (last ~4 comparisons = 8 songs)
 _RECENT_SONG_IDS: deque[int] = deque(maxlen=8)
+_RECENT_PAIR_KEYS: deque[tuple[int, int]] = deque(maxlen=12)
+
+
+def _pair_key(song_a_id: int, song_b_id: int) -> tuple[int, int]:
+    return tuple(sorted((song_a_id, song_b_id)))
 
 
 def note_recent_pair(song_a_id: int, song_b_id: int) -> None:
     _RECENT_SONG_IDS.append(song_a_id)
     _RECENT_SONG_IDS.append(song_b_id)
+    _RECENT_PAIR_KEYS.append(_pair_key(song_a_id, song_b_id))
 
 
 def _recent_set() -> set[int]:
     return set(_RECENT_SONG_IDS)
+
+
+def _recent_pairs() -> set[tuple[int, int]]:
+    return set(_RECENT_PAIR_KEYS)
 
 
 def _filter_recent(songs: list[Song]) -> list[Song]:
@@ -56,7 +66,19 @@ def _best_pair(songs: list[Song]) -> tuple[Song, Song] | None:
         return None
     best = None
     best_score = -1.0
+    recent_pairs = _recent_pairs()
     # O(n^2) is fine for n<=60
+    for i in range(len(songs)):
+        for j in range(i + 1, len(songs)):
+            if _pair_key(songs[i].id, songs[j].id) in recent_pairs:
+                continue
+            s = _score_pair(songs[i], songs[j])
+            if s > best_score:
+                best_score = s
+                best = (songs[i], songs[j])
+    if best is not None:
+        return best
+    # If every candidate pair was recently used, allow repeats rather than failing.
     for i in range(len(songs)):
         for j in range(i + 1, len(songs)):
             s = _score_pair(songs[i], songs[j])
@@ -79,7 +101,12 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
     if placement_song is not None and placement_song.id not in recent:
         opponent = pick_opponent(db, placement_song)
         attempts = 0
-        while opponent is not None and opponent.id in recent and attempts < 5:
+        recent_pairs = _recent_pairs()
+        while (
+            opponent is not None
+            and (opponent.id in recent or _pair_key(placement_song.id, opponent.id) in recent_pairs)
+            and attempts < 8
+        ):
             opponent = pick_opponent(db, placement_song)
             attempts += 1
         if opponent is not None:
