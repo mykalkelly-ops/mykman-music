@@ -25,6 +25,9 @@
     <div style="font-size:0.82rem; color:#7a5a88; margin-top:0.45rem;">
       If this stays unknown, the albums page shows a question mark instead of pretending the imported subset is the whole album.
     </div>
+    <div style="margin-top:0.65rem;">
+      <button id="album-enrich" type="button">Fetch full tracklist/art</button>
+    </div>
   {% endif %}
 </div>
 
@@ -32,15 +35,27 @@
 <table>
   <thead><tr><th>#</th><th>MYKs</th><th>Title</th><th>Rating</th><th>RD</th><th>Cmps</th></tr></thead>
   <tbody>
-    {% for s in songs %}
-    {% set stars = star_tier(s.glicko_rating, s.glicko_rd) %}
-    <tr>
-      <td>{{ loop.index }}</td>
-      <td>{{ render_myks(stars)|safe }}</td>
-      <td><a href="/songs/{{ s.id }}">{{ s.title }}</a></td>
-      <td>{{ "%.0f"|format(s.glicko_rating) }}</td>
-      <td>{{ "%.0f"|format(s.glicko_rd) }}</td>
-      <td>{{ s.comparison_count }}</td>
+    {% for row in track_rows %}
+    {% set s = row.song %}
+    {% set myks = star_tier(s.glicko_rating, s.glicko_rd) if s else none %}
+    <tr {% if row.liked %}style="background:rgba(111, 214, 138, 0.25);"{% endif %}>
+      <td>{{ row.position if row.position else loop.index }}</td>
+      <td>{{ render_myks(myks)|safe }}</td>
+      <td>
+        {% if s %}
+          <a href="/songs/{{ s.id }}">{{ row.title }}</a>
+        {% else %}
+          {{ row.title }}
+        {% endif %}
+        {% if row.liked %}
+          <span style="margin-left:0.45rem; color:#2d7a3f; font-weight:700;">liked</span>
+        {% elif not row.known %}
+          <span style="margin-left:0.45rem; color:#7a5a88;">not in library subset</span>
+        {% endif %}
+      </td>
+      <td>{% if s %}{{ "%.0f"|format(s.glicko_rating) }}{% else %}&mdash;{% endif %}</td>
+      <td>{% if s %}{{ "%.0f"|format(s.glicko_rd) }}{% else %}&mdash;{% endif %}</td>
+      <td>{% if s %}{{ s.comparison_count }}{% else %}&mdash;{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>
@@ -70,6 +85,15 @@ document.getElementById('album-total-save')?.addEventListener('click', async () 
 
 document.getElementById('album-total-clear')?.addEventListener('click', async () => {
   await saveAlbumTotal(null);
+});
+
+document.getElementById('album-enrich')?.addEventListener('click', async () => {
+  const resp = await fetch('/api/albums/{{ album.id }}/enrich', { method: 'POST' });
+  if (!resp.ok) {
+    alert('Could not fetch the album tracklist right now.');
+    return;
+  }
+  window.location.reload();
 });
 </script>
 {% endif %}

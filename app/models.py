@@ -79,6 +79,7 @@ class Album(Base):
     cover_path = Column(String, nullable=True)
     artist = relationship("Artist", back_populates="albums")
     songs = relationship("Song", back_populates="album", cascade="all, delete-orphan")
+    tracks = relationship("AlbumTrack", back_populates="album", cascade="all, delete-orphan")
     __table_args__ = (UniqueConstraint("artist_id", "title", name="uq_album_artist_title"),)
 
 
@@ -87,6 +88,7 @@ class Song(Base):
     id = Column(Integer, primary_key=True)
     album_id = Column(Integer, ForeignKey("albums.id"), nullable=False, index=True)
     title = Column(String, nullable=False)
+    track_number = Column(Integer, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     apple_track_id = Column(String, nullable=True, index=True)
     glicko_rating = Column(Float, default=DEFAULT_RATING)
@@ -100,6 +102,18 @@ class Song(Base):
     liked = Column(Boolean, default=False, nullable=False)
     album = relationship("Album", back_populates="songs")
     playlist_entries = relationship("PlaylistSong", back_populates="song", cascade="all, delete-orphan")
+
+
+class AlbumTrack(Base):
+    __tablename__ = "album_tracks"
+    id = Column(Integer, primary_key=True)
+    album_id = Column(Integer, ForeignKey("albums.id"), nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    title = Column(String, nullable=False)
+    duration_ms = Column(Integer, nullable=True)
+    recording_mb_id = Column(String, nullable=True)
+    album = relationship("Album", back_populates="tracks")
+    __table_args__ = (UniqueConstraint("album_id", "position", name="uq_album_track_position"),)
 
 
 class SongLink(Base):
@@ -205,6 +219,8 @@ def init_db(engine):
             conn.execute(text("ALTER TABLE songs ADD COLUMN placement_hi FLOAT"))
         if "liked" not in existing_cols:
             conn.execute(text("ALTER TABLE songs ADD COLUMN liked BOOLEAN DEFAULT 0"))
+        if "track_number" not in existing_cols:
+            conn.execute(text("ALTER TABLE songs ADD COLUMN track_number INTEGER"))
         # Add artists.kind if missing
         try:
             artist_cols = {c["name"] for c in insp.get_columns("artists")}
@@ -293,4 +309,11 @@ def init_db(engine):
             insp.get_columns("song_links")
         except Exception:
             pass
+        try:
+            insp.get_columns("album_tracks")
+        except Exception:
+            try:
+                AlbumTrack.__table__.create(bind=conn)
+            except Exception:
+                pass
     # notes table is created by create_all above if missing

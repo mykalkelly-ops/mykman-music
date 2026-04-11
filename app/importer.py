@@ -138,6 +138,7 @@ def import_library(xml_path: Path) -> dict:
                 song = Song(
                     album_id=album.id,
                     title=name,
+                    track_number=track.get("Track Number"),
                     duration_ms=track.get("Total Time"),
                     apple_track_id=str(track_id),
                     liked=str(track_id) in wanted_track_ids,
@@ -148,6 +149,8 @@ def import_library(xml_path: Path) -> dict:
             else:
                 if song.apple_track_id is None:
                     song.apple_track_id = str(track_id)
+                if song.track_number is None and track.get("Track Number") is not None:
+                    song.track_number = track.get("Track Number")
                 if str(track_id) in wanted_track_ids:
                     song.liked = True
 

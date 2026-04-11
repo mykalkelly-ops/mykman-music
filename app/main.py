@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 from .db import engine, get_session
 from .models import (
     Artist, Album, Song, SongLink, Playlist, PlaylistSong, Comparison, Note, Comment,
-    Person, ArtistMembership, SongCredit, Subscriber, init_db,
+    Person, ArtistMembership, SongCredit, Subscriber, AlbumTrack, init_db,
 )
 from .auth import (
     is_admin, require_admin, login as do_login, logout as do_logout,
@@ -528,18 +528,17 @@ def song_detail(song_id: int, request: Request, db: Session = Depends(get_sessio
 def album_detail(album_id: int, request: Request, db: Session = Depends(get_session)):
     al = (
         db.query(Album)
-        .options(joinedload(Album.artist), joinedload(Album.songs))
+        .options(joinedload(Album.artist), joinedload(Album.songs), joinedload(Album.tracks))
         .filter(Album.id == album_id)
         .first()
     )
     if al is None:
         return HTMLResponse("Album not found", status_code=404)
-    songs_sorted = sorted(al.songs, key=lambda s: -s.glicko_rating)
     return templates.TemplateResponse(
         request, "album_detail.html",
         {
             "album": al,
-            "songs": songs_sorted,
+            "track_rows": _album_track_rows(al),
             "star_tier": myk_tier,
             "render_myks": render_myks,
             "is_rankable_album": is_rankable_album,
@@ -1416,10 +1415,76 @@ def _song_payload(s: Song) -> dict:
         "artist": s.album.artist.name if s.album and s.album.artist else None,
         "year": s.album.year if s.album else None,
         "genre": s.album.genre if s.album else None,
+        "track_number": s.track_number,
         "rating": round(s.glicko_rating, 1),
         "rd": round(s.glicko_rd, 1),
         "comparison_count": s.comparison_count,
     }
+
+
+def _normalize_track_title(value: str) -> str:
+    import re
+    value = (value or "").lower().strip()
+    value = re.sub(r"\s*\(.*?\)", "", value)
+    value = re.sub(r"\s*\[.*?\]", "", value)
+    value = value.replace("&", "and")
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _album_track_rows(album: Album):
+    liked_ids = {song.id for song in album.songs if song.liked}
+    songs_by_norm: dict[str, list[Song]] = {}
+    for song in album.songs:
+        songs_by_norm.setdefault(_normalize_track_title(song.title), []).append(song)
+
+    for bucket in songs_by_norm.values():
+        bucket.sort(key=lambda s: (s.track_number is None, s.track_number or 9999, s.title.lower()))
+
+    rows = []
+    if album.tracks:
+        for track in sorted(album.tracks, key=lambda t: t.position):
+            matched_song = None
+            bucket = songs_by_norm.get(_normalize_track_title(track.title)) or []
+            if bucket:
+                matched_song = bucket.pop(0)
+            rows.append(
+                {
+                    "position": track.position,
+                    "title": track.title,
+                    "duration_ms": track.duration_ms,
+                    "song": matched_song,
+                    "liked": bool(matched_song and matched_song.id in liked_ids),
+                    "known": matched_song is not None,
+                }
+            )
+        leftovers = [song for bucket in songs_by_norm.values() for song in bucket]
+        for song in sorted(leftovers, key=lambda s: (s.track_number is None, s.track_number or 9999, s.title.lower())):
+            rows.append(
+                {
+                    "position": song.track_number,
+                    "title": song.title,
+                    "duration_ms": song.duration_ms,
+                    "song": song,
+                    "liked": song.id in liked_ids,
+                    "known": True,
+                }
+            )
+        return rows
+
+    songs_sorted = sorted(album.songs, key=lambda s: (s.track_number is None, s.track_number or 9999, s.title.lower()))
+    for idx, song in enumerate(songs_sorted, start=1):
+        rows.append(
+            {
+                "position": song.track_number or idx,
+                "title": song.title,
+                "duration_ms": song.duration_ms,
+                "song": song,
+                "liked": song.id in liked_ids,
+                "known": True,
+            }
+        )
+    return rows
 
 
 @app.get("/compare", response_class=HTMLResponse)

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from . import musicbrainz as mb
 from . import art
-from .models import Artist, Album, Person, ArtistMembership
+from .models import Artist, Album, Person, ArtistMembership, AlbumTrack
 
 # Module-level progress for the bulk background task.
 progress = {
@@ -144,14 +144,34 @@ def enrich_album(db: Session, album: Album) -> dict:
         rel = mb.search_release(album.artist.name, album.title)
         if rel:
             album.mb_id = album.mb_id or rel.get("id")
-            if not album.total_track_count:
-                detail = mb.get_release(rel.get("id"))
-                if detail:
-                    total_tracks = 0
-                    for medium in detail.get("media", []) or []:
-                        total_tracks += int(medium.get("track-count") or 0)
-                    if total_tracks:
-                        album.total_track_count = total_tracks
+            detail = mb.get_release(rel.get("id"))
+            if detail:
+                total_tracks = 0
+                track_rows: list[dict] = []
+                for medium in detail.get("media", []) or []:
+                    total_tracks += int(medium.get("track-count") or 0)
+                    for track in medium.get("tracks", []) or []:
+                        try:
+                            position = int(track.get("position") or 0)
+                        except Exception:
+                            position = 0
+                        if position <= 0:
+                            continue
+                        recording = track.get("recording") or {}
+                        track_rows.append(
+                            {
+                                "position": position,
+                                "title": track.get("title") or recording.get("title") or "",
+                                "duration_ms": track.get("length"),
+                                "recording_mb_id": recording.get("id"),
+                            }
+                        )
+                if total_tracks and not album.total_track_count:
+                    album.total_track_count = total_tracks
+                if track_rows:
+                    db.query(AlbumTrack).filter(AlbumTrack.album_id == album.id).delete()
+                    for row in sorted(track_rows, key=lambda r: r["position"]):
+                        db.add(AlbumTrack(album_id=album.id, **row))
     if album.release_group_mb_id and not album.cover_url:
         album.cover_url = mb.get_cover_art_url(album.release_group_mb_id)
     db.commit()
