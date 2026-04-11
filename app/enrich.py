@@ -140,7 +140,8 @@ def enrich_album(db: Session, album: Album) -> dict:
         album.release_group_mb_id = rg.get("id")
         if not album.year:
             album.year = _parse_year(rg.get("first-release-date"))
-    if not album.mb_id or not album.total_track_count:
+    existing_track_count = len(album.tracks) if getattr(album, "tracks", None) is not None else 0
+    if not album.mb_id or not album.total_track_count or existing_track_count == 0:
         rel = mb.search_release(album.artist.name, album.title)
         if rel:
             album.mb_id = album.mb_id or rel.get("id")

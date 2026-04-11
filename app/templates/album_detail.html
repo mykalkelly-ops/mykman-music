@@ -27,6 +27,7 @@
     </div>
     <div style="margin-top:0.65rem;">
       <button id="album-enrich" type="button">Fetch full tracklist/art</button>
+      <span id="album-enrich-status" style="margin-left:0.55rem; color:#7a5a88; font-size:0.85rem;"></span>
     </div>
   {% endif %}
 </div>
@@ -88,11 +89,18 @@ document.getElementById('album-total-clear')?.addEventListener('click', async ()
 });
 
 document.getElementById('album-enrich')?.addEventListener('click', async () => {
+  const button = document.getElementById('album-enrich');
+  const status = document.getElementById('album-enrich-status');
+  button.disabled = true;
+  if (status) status.textContent = 'fetching...';
   const resp = await fetch('/api/albums/{{ album.id }}/enrich', { method: 'POST' });
   if (!resp.ok) {
+    button.disabled = false;
+    if (status) status.textContent = '';
     alert('Could not fetch the album tracklist right now.');
     return;
   }
+  if (status) status.textContent = 'done';
   window.location.reload();
 });
 </script>
