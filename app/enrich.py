@@ -142,43 +142,53 @@ def enrich_album(db: Session, album: Album) -> dict:
             album.year = _parse_year(rg.get("first-release-date"))
     existing_track_count = len(album.tracks) if getattr(album, "tracks", None) is not None else 0
     if not album.mb_id or not album.total_track_count or existing_track_count == 0:
-        rel = mb.search_release(album.artist.name, album.title)
-        if rel:
-            album.mb_id = album.mb_id or rel.get("id")
-            detail = mb.get_release(rel.get("id"))
-            if detail:
-                total_tracks = 0
-                track_rows: list[dict] = []
-                for medium in detail.get("media", []) or []:
-                    total_tracks += int(medium.get("track-count") or 0)
-                    for track in medium.get("tracks", []) or []:
-                        try:
-                            position = int(track.get("position") or 0)
-                        except Exception:
-                            position = 0
-                        if position <= 0:
-                            continue
-                        recording = track.get("recording") or {}
-                        track_rows.append(
-                            {
-                                "position": position,
-                                "title": track.get("title") or recording.get("title") or "",
-                                "duration_ms": track.get("length"),
-                                "recording_mb_id": recording.get("id"),
-                            }
-                        )
-                if total_tracks and not album.total_track_count:
-                    album.total_track_count = total_tracks
-                if track_rows:
-                    db.query(AlbumTrack).filter(AlbumTrack.album_id == album.id).delete()
-                    for row in sorted(track_rows, key=lambda r: r["position"]):
-                        db.add(AlbumTrack(album_id=album.id, **row))
+        detail = None
+        if album.mb_id:
+            detail = mb.get_release(album.mb_id)
+        if detail is None:
+            rel = mb.search_release(album.artist.name, album.title)
+            if rel:
+                album.mb_id = album.mb_id or rel.get("id")
+                detail = mb.get_release(rel.get("id"))
+        if detail:
+            total_tracks = 0
+            track_rows: list[dict] = []
+            for medium in detail.get("media", []) or []:
+                total_tracks += int(medium.get("track-count") or 0)
+                for track in medium.get("tracks", []) or []:
+                    try:
+                        position = int(track.get("position") or 0)
+                    except Exception:
+                        position = 0
+                    if position <= 0:
+                        continue
+                    recording = track.get("recording") or {}
+                    track_rows.append(
+                        {
+                            "position": position,
+                            "title": track.get("title") or recording.get("title") or "",
+                            "duration_ms": track.get("length"),
+                            "recording_mb_id": recording.get("id"),
+                        }
+                    )
+            if total_tracks and not album.total_track_count:
+                album.total_track_count = total_tracks
+            if track_rows:
+                db.query(AlbumTrack).filter(AlbumTrack.album_id == album.id).delete()
+                for row in sorted(track_rows, key=lambda r: r["position"]):
+                    db.add(AlbumTrack(album_id=album.id, **row))
     if album.release_group_mb_id and not album.cover_url:
         album.cover_url = mb.get_cover_art_url(album.release_group_mb_id)
     db.commit()
     if album.cover_url and not album.cover_path:
         art.cache_album_art(album, db)
-    return {"ok": True, "rg": album.release_group_mb_id, "cover": album.cover_path}
+    fresh_track_count = len(album.tracks) if getattr(album, "tracks", None) is not None else 0
+    return {
+        "ok": True,
+        "rg": album.release_group_mb_id,
+        "cover": album.cover_path,
+        "track_count": fresh_track_count,
+    }
 
 
 def bulk_enrich(SessionFactory):
