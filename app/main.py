@@ -29,7 +29,7 @@ from .auth import (
 from .glicko import update_pair
 from .pair_selector import pick_pair, note_recent_pair
 from .placement import update_bounds, maybe_finalize
-from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album
+from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type
 from .notes import render_markdown, resolve_target, search_notes, search_targets, related_songs_for_note
 from .canonical import canonical_key, unique_liked_song_count, progress_metrics, linked_song_groups
 from .genres import normalize_genre
@@ -408,8 +408,11 @@ def albums_page(request: Request, db: Session = Depends(get_session)):
         tid for (tid,) in db.query(Note.target_id).filter(Note.target_type == "album", Note.target_id.isnot(None)).distinct().all()
     }
     covers = {aid: cp for (aid, cp) in db.query(Album.id, Album.cover_path).filter(Album.cover_path.isnot(None)).all()}
+    all_albums = album_scores(db)
+    albums_main = [a for a in all_albums if a.release_type == "album"]
+    albums_eps = [a for a in all_albums if a.release_type == "ep"]
     return templates.TemplateResponse(
-        request, "albums.html", {"albums": album_scores(db), "reviewed_ids": reviewed, "covers": covers}
+        request, "albums.html", {"albums": albums_main, "eps": albums_eps, "reviewed_ids": reviewed, "covers": covers}
     )
 
 
@@ -785,30 +788,38 @@ def delete_song_link(song_id: int, other_song_id: int, request: Request, db: Ses
 def next_artist_prompt(db: Session = Depends(get_session)):
     """Return one artist that still needs classification (kind unset OR no memberships),
     prioritizing artists with songs in playlists."""
-    # Find artists with no memberships
-    member_artist_ids = {
-        aid for (aid,) in db.query(ArtistMembership.artist_id).distinct().all()
-    }
     candidates = (
         db.query(Artist)
         .join(Album, Album.artist_id == Artist.id)
         .join(Song, Song.album_id == Album.id)
         .join(PlaylistSong, PlaylistSong.song_id == Song.id)
-        .filter((Artist.kind.is_(None)) | (~Artist.id.in_(member_artist_ids)) if member_artist_ids
-                else (Artist.kind.is_(None)))
         .distinct()
-        .limit(50)
         .all()
     )
-    artist = None
-    for a in candidates:
-        if a.kind is None or a.id not in member_artist_ids:
-            artist = a
-            break
-    if artist is None:
-        # fall back to any artist
-        all_unset = db.query(Artist).filter(Artist.kind.is_(None)).first()
-        artist = all_unset
+
+    def unresolved(a: Artist) -> bool:
+        memberships = db.query(ArtistMembership).filter(ArtistMembership.artist_id == a.id).all()
+        membership_count = len(memberships)
+        child_count = sum(1 for m in memberships if m.child_artist_id is not None)
+        person_members = [m for m in memberships if m.person_id is not None]
+        name_lower = (a.name or "").lower()
+        collab_hint = any(token in name_lower for token in (" & ", ",", " feat.", " featuring ", " ft. ", " x "))
+        if a.kind is None:
+            return True
+        if a.kind == "solo":
+            if membership_count > 1 or child_count > 0 or collab_hint:
+                return True
+            if a.gender is None:
+                return True
+            if person_members:
+                person = db.get(Person, person_members[0].person_id)
+                if person is None or person.gender == "unknown":
+                    return True
+        if a.kind in ("group", "collab") and membership_count == 0:
+            return True
+        return False
+
+    artist = next((a for a in candidates if unresolved(a)), None)
     if artist is None:
         return {"artist": None}
     return {"artist": {"id": artist.id, "name": artist.name, "kind": artist.kind}}

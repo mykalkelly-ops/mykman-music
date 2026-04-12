@@ -75,6 +75,7 @@ class Album(Base):
     excluded_from_listened = Column(Boolean, default=False)
     mb_id = Column(String, nullable=True)
     release_group_mb_id = Column(String, nullable=True)
+    release_group_type = Column(String, nullable=True)
     cover_url = Column(String, nullable=True)
     cover_path = Column(String, nullable=True)
     artist = relationship("Artist", back_populates="albums")
@@ -264,6 +265,7 @@ def init_db(engine):
             for col, ddl in [
                 ("mb_id", "ALTER TABLE albums ADD COLUMN mb_id VARCHAR"),
                 ("release_group_mb_id", "ALTER TABLE albums ADD COLUMN release_group_mb_id VARCHAR"),
+                ("release_group_type", "ALTER TABLE albums ADD COLUMN release_group_type VARCHAR"),
                 ("cover_url", "ALTER TABLE albums ADD COLUMN cover_url VARCHAR"),
                 ("cover_path", "ALTER TABLE albums ADD COLUMN cover_path VARCHAR"),
                 ("total_track_count", "ALTER TABLE albums ADD COLUMN total_track_count INTEGER"),

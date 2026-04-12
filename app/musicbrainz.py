@@ -72,6 +72,7 @@ def get_artist(mbid: str) -> dict | None:
 
 
 def search_release_group(artist_name: str, album_name: str) -> dict | None:
+    preferred_types = _preferred_release_types(album_name)
     for title in _album_title_variants(album_name):
         q = urllib.parse.quote(f'releasegroup:"{title}" AND artist:"{artist_name}"')
         url = f"{MB_BASE}/release-group?query={q}&fmt=json&limit=5"
@@ -81,8 +82,7 @@ def search_release_group(artist_name: str, album_name: str) -> dict | None:
         groups = data.get("release-groups") or []
         if not groups:
             continue
-        # Prefer album or EP, else first.
-        for primary_type in ("album", "ep"):
+        for primary_type in preferred_types:
             for g in groups:
                 if (g.get("primary-type") or "").lower() == primary_type:
                     return g
@@ -91,6 +91,7 @@ def search_release_group(artist_name: str, album_name: str) -> dict | None:
 
 
 def search_release(artist_name: str, album_name: str) -> dict | None:
+    preferred_types = _preferred_release_types(album_name)
     for title in _album_title_variants(album_name):
         q = urllib.parse.quote(f'release:"{title}" AND artist:"{artist_name}"')
         url = f"{MB_BASE}/release?query={q}&fmt=json&limit=10"
@@ -100,6 +101,11 @@ def search_release(artist_name: str, album_name: str) -> dict | None:
         releases = data.get("releases") or []
         if not releases:
             continue
+        for preferred_type in preferred_types:
+            for release in releases:
+                rg = release.get("release-group") or {}
+                if (rg.get("primary-type") or "").lower() == preferred_type and (release.get("status") or "").lower() in ("official", ""):
+                    return release
         for release in releases:
             if (release.get("status") or "").lower() in ("official", ""):
                 return release
@@ -117,11 +123,22 @@ def _album_title_variants(album_name: str) -> list[str]:
             variants.append(v)
 
     add(value)
+    add(re.sub(r"\s*-\s*EP\s*$", " EP", value, flags=re.I))
+    add(re.sub(r"\s*-\s*Single\s*$", " Single", value, flags=re.I))
     add(re.sub(r"\s*-\s*(EP|Single)\s*$", "", value, flags=re.I))
     add(re.sub(r"\s*\((Deluxe|Deluxe Edition|Deluxe Version|Expanded|Remastered|Remaster|Bonus.*?|EP|Single)\)\s*$", "", value, flags=re.I))
     add(re.sub(r"\s*\[(Deluxe|Deluxe Edition|Deluxe Version|Expanded|Remastered|Remaster|Bonus.*?|EP|Single)\]\s*$", "", value, flags=re.I))
     add(re.sub(r"\s+(Deluxe|Deluxe Edition|Deluxe Version|Expanded|Remastered|Remaster)\s*$", "", value, flags=re.I))
     return variants
+
+
+def _preferred_release_types(album_name: str) -> list[str]:
+    title = (album_name or "").lower()
+    if "ep" in title:
+        return ["ep", "album", "single"]
+    if "single" in title:
+        return ["single", "ep", "album"]
+    return ["album", "ep", "single"]
 
 
 def get_release(mbid: str) -> dict | None:

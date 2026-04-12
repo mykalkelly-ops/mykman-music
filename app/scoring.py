@@ -62,6 +62,7 @@ class AlbumScore:
     displayed_total_tracks: int | None
     liked_count: int
     avg_rd: float
+    release_type: str
 
 
 def is_rankable_album(album: Album) -> bool:
@@ -72,6 +73,15 @@ def is_rankable_album(album: Album) -> bool:
     if total_tracks and total_tracks <= 3:
         return False
     return True
+
+
+def classify_release_type(album: Album) -> str:
+    title = (album.title or "").lower()
+    if (album.release_group_type or "").lower() == "ep" or "ep" in title:
+        return "ep"
+    if "single" in title or ((album.total_track_count or 0) and (album.total_track_count or 0) <= 3):
+        return "single"
+    return "album"
 
 
 @dataclass
@@ -125,6 +135,7 @@ def album_scores(db: Session) -> list[AlbumScore]:
                 displayed_total_tracks=album.total_track_count or None,
                 liked_count=liked_count,
                 avg_rd=rd_sum / len(songs),
+                release_type=classify_release_type(album),
             )
         )
     results.sort(key=lambda row: row.score, reverse=True)

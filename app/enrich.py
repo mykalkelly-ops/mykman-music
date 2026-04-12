@@ -138,8 +138,13 @@ def enrich_album(db: Session, album: Album) -> dict:
         if not rg:
             return {"ok": False, "reason": "no_match"}
         album.release_group_mb_id = rg.get("id")
+        album.release_group_type = (rg.get("primary-type") or "").lower() or None
         if not album.year:
             album.year = _parse_year(rg.get("first-release-date"))
+    elif not album.release_group_type:
+        rg = mb.get_release_group(album.release_group_mb_id)
+        if rg:
+            album.release_group_type = (rg.get("primary-type") or "").lower() or None
     existing_track_count = len(album.tracks) if getattr(album, "tracks", None) is not None else 0
     found_detail = False
     if not album.mb_id or not album.total_track_count or existing_track_count == 0:
@@ -192,6 +197,7 @@ def enrich_album(db: Session, album: Album) -> dict:
     return {
         "ok": True,
         "rg": album.release_group_mb_id,
+        "release_type": album.release_group_type,
         "cover": album.cover_path,
         "track_count": fresh_track_count,
     }

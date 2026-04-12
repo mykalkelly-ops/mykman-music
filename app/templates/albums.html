@@ -2,6 +2,7 @@
 {% block content %}
 <h1>Albums</h1>
 <p style="color:#888">Derived from song ratings. Unliked songs pull the album down. Score is on Glicko scale (~1500 average). Totals use full track counts when known; otherwise they stay unknown instead of pretending the imported subset is the whole album.</p>
+<h2>Albums</h2>
 <table>
   <thead><tr><th>#</th><th>Album</th><th>Artist</th><th>Score</th><th>Liked / Total</th><th>Avg RD</th><th>Review</th></tr></thead>
   <tbody>
@@ -24,4 +25,29 @@
   {% endfor %}
   </tbody>
 </table>
+{% if eps %}
+<h2>EPs</h2>
+<table>
+  <thead><tr><th>#</th><th>EP</th><th>Artist</th><th>Score</th><th>Liked / Total</th><th>Avg RD</th><th>Review</th></tr></thead>
+  <tbody>
+  {% for a in eps %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td><a href="/albums/{{ a.album_id }}">{{ a.title }}</a></td>
+      <td><a href="/artists/{{ a.artist_id if a.artist_id is defined else '' }}">{{ a.artist_name }}</a></td>
+      <td>{{ "%.0f"|format(a.score) }}</td>
+      <td>{{ a.liked_count }} / {{ a.displayed_total_tracks if a.displayed_total_tracks else "?" }}</td>
+      <td>{{ "%.0f"|format(a.avg_rd) }}</td>
+      <td>
+        {% if a.album_id in reviewed_ids %}
+          <a href="/albums/{{ a.album_id }}#notes">Read</a>
+        {% elif request.state.is_admin %}
+          <a href="/notes/new?target_type=album&target_id={{ a.album_id }}" style="color:#555">+</a>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}
