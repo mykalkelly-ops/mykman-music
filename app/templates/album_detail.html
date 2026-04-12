@@ -27,6 +27,7 @@
     </div>
     <div style="margin-top:0.65rem;">
       <button id="album-enrich" type="button">Fetch full tracklist/art</button>
+      <button id="album-listen-next" type="button">Listen to this album next</button>
       <span id="album-enrich-status" style="margin-left:0.55rem; color:#7a5a88; font-size:0.85rem;"></span>
     </div>
   {% endif %}
@@ -116,6 +117,25 @@ document.getElementById('album-enrich')?.addEventListener('click', async () => {
   }
   if (status) status.textContent = `saved ${data.track_count || 0} tracks`;
   window.location.reload();
+});
+
+document.getElementById('album-listen-next')?.addEventListener('click', async () => {
+  const status = document.getElementById('album-enrich-status');
+  const resp = await fetch('/api/listen-next', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      target_type: 'album',
+      target_id: {{ album.id }},
+      note: 'Queued from album page',
+    }),
+  });
+  if (resp.ok) {
+    if (status) status.textContent = 'queued for later listening';
+  } else if (status) {
+    status.textContent = 'could not add to listen-next queue';
+  }
 });
 </script>
 {% endif %}

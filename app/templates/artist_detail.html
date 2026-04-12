@@ -19,6 +19,7 @@
     {% if artist.disambiguation %}<div style="color:#888; font-size:0.85rem;">{{ artist.disambiguation }}</div>{% endif %}
     {% if is_admin %}
       <button id="enrich-btn" style="margin-top:0.5rem;">Enrich from MusicBrainz</button>
+      <button id="artist-listen-next" style="margin-top:0.5rem;">Listen to this artist next</button>
       <span id="enrich-status" style="color:#888; font-size:0.85rem; margin-left:0.5rem;"></span>
     {% endif %}
   </div>
@@ -180,6 +181,25 @@ async function searchChildren() {
   }
 }
 document.getElementById('child-q').oninput = searchChildren;
+
+document.getElementById('artist-listen-next')?.addEventListener('click', async () => {
+  const status = document.getElementById('enrich-status');
+  const resp = await fetch('/api/listen-next', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      target_type: 'artist',
+      target_id: ARTIST_ID,
+      note: 'Queued from artist page',
+    }),
+  });
+  if (resp.ok) {
+    if (status) status.textContent = 'queued for later listening';
+  } else if (status) {
+    status.textContent = 'could not add to listen-next queue';
+  }
+});
 </script>
 {% endif %}
 
