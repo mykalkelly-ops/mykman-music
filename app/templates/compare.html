@@ -102,6 +102,10 @@ function songLine(s, idx, side, checked) {
     <div style="font-family:'Caveat',cursive; font-size:1.9rem; font-weight:700; color:#ff5fb0; line-height:1.05; text-shadow:0 1px 0 #fff7fb;">${escapeHtml(s.title)}</div>
     <div style="color:#3a2342; font-weight:700; margin-top:0.2rem;">${escapeHtml(s.artist || '')}</div>
     <div style="color:#7a5a88; font-size:0.8rem; margin-top:0.35rem;">${escapeHtml(meta)}</div>
+    <div style="display:flex; gap:0.35rem; flex-wrap:wrap; margin-top:0.65rem;">
+      <button type="button" data-queue-type="album" data-queue-id="${s.album_id || ''}">Listen to album next</button>
+      <button type="button" data-queue-type="artist" data-queue-id="${s.artist_id || ''}">Listen to artist next</button>
+    </div>
   `;
 }
 
@@ -148,6 +152,24 @@ function renderQueue() {
         if (el.dataset.nostalgiaSide === 'a') queue[idx].nostalgiaA = el.checked;
         if (el.dataset.nostalgiaSide === 'b') queue[idx].nostalgiaB = el.checked;
         saveQueue();
+      });
+    });
+    wrap.querySelectorAll('[data-queue-type]').forEach(el => {
+      el.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const targetType = el.dataset.queueType;
+        const targetId = Number(el.dataset.queueId || 0);
+        if (!targetId) return;
+        const note = `Queued from compare while deciding between ${pair.a.title} and ${pair.b.title}`;
+        const resp = await fetch('/api/listen-next', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ target_type: targetType, target_id: targetId, note }),
+        });
+        if (resp.ok) {
+          el.textContent = targetType === 'album' ? 'Queued album' : 'Queued artist';
+          el.disabled = true;
+        }
       });
     });
     root.appendChild(wrap);

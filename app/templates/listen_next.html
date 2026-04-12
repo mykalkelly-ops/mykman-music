@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Listen Next</h1>
+<p style="color:#7a5a88">Albums and artists you realized you want to go back and really hear.</p>
+
+{% if not items %}
+  <div class="panel">Nothing queued yet.</div>
+{% else %}
+<table>
+  <thead><tr><th>Type</th><th>Name</th><th>Context</th><th>Added</th><th></th></tr></thead>
+  <tbody>
+  {% for item in items %}
+    <tr>
+      <td>{{ item.target_type }}</td>
+      <td>
+        <a href="{{ item.href }}">{{ item.label }}</a>
+        {% if item.subtitle %}<div style="font-size:0.82rem; color:#7a5a88;">{{ item.subtitle }}</div>{% endif %}
+      </td>
+      <td>{{ item.note }}</td>
+      <td>{{ item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "" }}</td>
+      <td><button type="button" data-remove="{{ item.id }}">Done</button></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<script>
+document.querySelectorAll('[data-remove]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const resp = await fetch('/api/listen-next/' + btn.dataset.remove, { method: 'DELETE' });
+    if (resp.ok) window.location.reload();
+  });
+});
+</script>
+{% endblock %}

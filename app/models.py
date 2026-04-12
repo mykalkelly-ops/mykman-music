@@ -185,6 +185,16 @@ class Subscriber(Base):
     notes = Column(String, nullable=True)
 
 
+class ListenQueueItem(Base):
+    __tablename__ = "listen_queue_items"
+    id = Column(Integer, primary_key=True)
+    target_type = Column(String, nullable=False)  # 'album' | 'artist'
+    target_id = Column(Integer, nullable=False, index=True)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("target_type", "target_id", name="uq_listen_queue_target"),)
+
+
 class AdminSession(Base):
     __tablename__ = "admin_sessions"
     id = Column(Integer, primary_key=True)
@@ -314,6 +324,13 @@ def init_db(engine):
         except Exception:
             try:
                 AlbumTrack.__table__.create(bind=conn)
+            except Exception:
+                pass
+        try:
+            insp.get_columns("listen_queue_items")
+        except Exception:
+            try:
+                ListenQueueItem.__table__.create(bind=conn)
             except Exception:
                 pass
     # notes table is created by create_all above if missing

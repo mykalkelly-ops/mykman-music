@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 from .db import engine, get_session
 from .models import (
     Artist, Album, Song, SongLink, Playlist, PlaylistSong, Comparison, Note, Comment,
-    Person, ArtistMembership, SongCredit, Subscriber, AlbumTrack, init_db,
+    Person, ArtistMembership, SongCredit, Subscriber, AlbumTrack, ListenQueueItem, init_db,
 )
 from .auth import (
     is_admin, require_admin, login as do_login, logout as do_logout,
@@ -623,12 +623,53 @@ def album_queue_page(request: Request, db: Session = Depends(get_session)):
     return templates.TemplateResponse(request, "album_queue.html", {"items": items})
 
 
+@app.get("/listen-next", response_class=HTMLResponse)
+def listen_next_page(request: Request, db: Session = Depends(get_session)):
+    if not is_admin(request):
+        return RedirectResponse("/login", status_code=302)
+    rows = db.query(ListenQueueItem).order_by(ListenQueueItem.created_at.desc()).all()
+    items = []
+    for row in rows:
+        label = "Unknown"
+        href = "#"
+        subtitle = ""
+        if row.target_type == "album":
+            album = db.get(Album, row.target_id)
+            if album:
+                label = album.title
+                href = f"/albums/{album.id}"
+                subtitle = album.artist.name if album.artist else ""
+        elif row.target_type == "artist":
+            artist = db.get(Artist, row.target_id)
+            if artist:
+                label = artist.name
+                href = f"/artists/{artist.id}"
+        items.append(
+            {
+                "id": row.id,
+                "target_type": row.target_type,
+                "label": label,
+                "href": href,
+                "subtitle": subtitle,
+                "note": row.note or "",
+                "created_at": row.created_at,
+            }
+        )
+    return templates.TemplateResponse(request, "listen_next.html", {"items": items})
+
+
 class AlbumDecisionBody(BaseModel):
     listened: bool
 
 
 class AlbumMetaBody(BaseModel):
     total_track_count: int | None = None
+
+
+class ListenQueueBody(BaseModel):
+    target_type: str
+    target_id: int
+    note: str | None = None
 
 
 @app.post("/api/albums/{album_id}/listened")
@@ -659,6 +700,38 @@ def set_album_meta(album_id: int, body: AlbumMetaBody, request: Request, db: Ses
         "total_track_count": album.total_track_count,
         "rankable": is_rankable_album(album),
     }
+
+
+@app.post("/api/listen-next")
+def add_listen_next(body: ListenQueueBody, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    if body.target_type not in ("album", "artist"):
+        raise HTTPException(400, "invalid target")
+    existing = (
+        db.query(ListenQueueItem)
+        .filter(ListenQueueItem.target_type == body.target_type, ListenQueueItem.target_id == body.target_id)
+        .first()
+    )
+    if existing is not None:
+        if body.note:
+            existing.note = body.note
+            db.commit()
+        return {"ok": True, "created": False}
+    row = ListenQueueItem(target_type=body.target_type, target_id=body.target_id, note=body.note)
+    db.add(row)
+    db.commit()
+    return {"ok": True, "created": True}
+
+
+@app.delete("/api/listen-next/{item_id}")
+def delete_listen_next(item_id: int, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    row = db.get(ListenQueueItem, item_id)
+    if row is None:
+        raise HTTPException(404, "not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 class SongLinkBody(BaseModel):
@@ -1411,7 +1484,9 @@ def _song_payload(s: Song) -> dict:
     return {
         "id": s.id,
         "title": s.title,
+        "album_id": s.album.id if s.album else None,
         "album": s.album.title if s.album else None,
+        "artist_id": s.album.artist.id if s.album and s.album.artist else None,
         "artist": s.album.artist.name if s.album and s.album.artist else None,
         "year": s.album.year if s.album else None,
         "genre": s.album.genre if s.album else None,

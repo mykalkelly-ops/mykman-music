@@ -262,6 +262,7 @@
   <a href="/stats">Stats</a>
   <a href="/notes">MYK Thoughts</a>
   {% if request.state.is_admin %}<a href="/album-queue">Album Queue</a>{% endif %}
+  {% if request.state.is_admin %}<a href="/listen-next">Listen Next</a>{% endif %}
   {% if request.state.is_admin %}<a href="/moderation">Moderation</a>{% endif %}
   {% if request.state.is_admin %}<a href="/subscribers">Subscribers</a>{% endif %}
   {% if request.state.is_admin %}<a href="/safety">Safety</a>{% endif %}
