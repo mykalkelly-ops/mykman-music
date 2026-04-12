@@ -785,9 +785,15 @@ def delete_song_link(song_id: int, other_song_id: int, request: Request, db: Ses
 # ---------- Gender / band prompt queue ----------
 
 @app.get("/api/next-artist-prompt")
-def next_artist_prompt(db: Session = Depends(get_session)):
+def next_artist_prompt(exclude: str | None = None, db: Session = Depends(get_session)):
     """Return one artist that still needs classification (kind unset OR no memberships),
     prioritizing artists with songs in playlists."""
+    excluded_ids: set[int] = set()
+    if exclude:
+        for part in exclude.split(","):
+            part = part.strip()
+            if part.isdigit():
+                excluded_ids.add(int(part))
     candidates = (
         db.query(Artist)
         .join(Album, Album.artist_id == Artist.id)
@@ -819,7 +825,9 @@ def next_artist_prompt(db: Session = Depends(get_session)):
             return True
         return False
 
-    artist = next((a for a in candidates if unresolved(a)), None)
+    artist = next((a for a in candidates if a.id not in excluded_ids and unresolved(a)), None)
+    if artist is None and excluded_ids:
+        artist = next((a for a in candidates if unresolved(a)), None)
     if artist is None:
         return {"artist": None}
     return {"artist": {"id": artist.id, "name": artist.name, "kind": artist.kind}}
@@ -1982,7 +1990,19 @@ def quick_classify(artist_id: int, body: QuickClassifyBody, request: Request, db
             .first()
         )
         if existing is None:
-            db.add(ArtistMembership(artist_id=artist.id, person_id=person.id, role="member"))
+            existing = ArtistMembership(artist_id=artist.id, person_id=person.id, role="member")
+            db.add(existing)
+            db.flush()
+        # A solo act should resolve to one person membership, not a pile of aliases.
+        extra_memberships = (
+            db.query(ArtistMembership)
+            .filter(ArtistMembership.artist_id == artist.id, ArtistMembership.id != existing.id)
+            .all()
+        )
+        for membership in extra_memberships:
+            if membership.person_id == person.id:
+                continue
+            db.delete(membership)
         # legacy mirror
         artist.gender = {"male": "M", "female": "F", "nonbinary": "NB", "unknown": "Unknown"}.get(gender, "Unknown")
         artist.is_band = False

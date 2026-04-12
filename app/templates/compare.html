@@ -54,7 +54,24 @@
 
 <script>
 const STICKY_KEY = 'mykman_queue_v2';
+const PROMPT_SKIP_KEY = 'mykman_artist_prompt_recent_v1';
 let queue = [];
+
+function getRecentPromptIds() {
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(PROMPT_SKIP_KEY) || '[]');
+    return Array.isArray(raw) ? raw.filter(Number.isFinite) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function rememberPromptId(id) {
+  if (!id) return;
+  const ids = getRecentPromptIds().filter(x => x !== id);
+  ids.unshift(id);
+  sessionStorage.setItem(PROMPT_SKIP_KEY, JSON.stringify(ids.slice(0, 8)));
+}
 
 function pairKey(pair) {
   return [pair.a.id, pair.b.id].sort((x, y) => x - y).join(':');
@@ -251,7 +268,9 @@ document.getElementById('undo').onclick = async () => {
 };
 
 async function loadPrompt() {
-  const r = await fetch('/api/next-artist-prompt');
+  const exclude = getRecentPromptIds();
+  const qs = exclude.length ? ('?exclude=' + encodeURIComponent(exclude.join(','))) : '';
+  const r = await fetch('/api/next-artist-prompt' + qs);
   const data = await r.json();
   const el = document.getElementById('prompt');
   if (!data.artist) { el.style.display = 'none'; return; }
@@ -280,6 +299,7 @@ async function quickClassify(payload) {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(payload),
   });
+  rememberPromptId(id);
   resetPromptUI();
   loadPrompt();
 }
@@ -287,7 +307,12 @@ async function quickClassify(payload) {
 for (const btn of document.querySelectorAll('#prompt-q1 button')) {
   btn.onclick = async () => {
     const k = btn.dataset.k;
-    if (k === 'skip') { resetPromptUI(); loadPrompt(); return; }
+    if (k === 'skip') {
+      rememberPromptId(Number(document.getElementById('prompt').dataset.artistId));
+      resetPromptUI();
+      loadPrompt();
+      return;
+    }
     if (k === 'group') {
       await quickClassify({kind:'group'});
     } else if (k === 'solo') {
