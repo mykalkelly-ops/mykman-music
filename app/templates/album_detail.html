@@ -69,6 +69,7 @@
 async function saveAlbumTotal(totalValue) {
   const resp = await fetch('/api/albums/{{ album.id }}/meta', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ total_track_count: totalValue }),
   });
@@ -93,11 +94,16 @@ document.getElementById('album-enrich')?.addEventListener('click', async () => {
   const status = document.getElementById('album-enrich-status');
   button.disabled = true;
   if (status) status.textContent = 'fetching...';
-  const resp = await fetch('/api/albums/{{ album.id }}/enrich', { method: 'POST' });
+  const resp = await fetch('/api/albums/{{ album.id }}/enrich', { method: 'POST', credentials: 'same-origin' });
   let data = null;
   try {
     data = await resp.json();
   } catch (e) {}
+  if (resp.status === 403) {
+    button.disabled = false;
+    if (status) status.textContent = 'admin session expired. log in again.';
+    return;
+  }
   if (!resp.ok || !data || !data.ok) {
     button.disabled = false;
     if (status) {
