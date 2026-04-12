@@ -4,18 +4,25 @@
 
 <div style="margin:1rem 0;">
   <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Target</label>
-  <div id="target-display" style="padding:0.5rem; background:#1a1a1a; border-radius:4px;">
+  <div id="target-display" style="padding:0.65rem 0.8rem; background:rgba(255,255,255,0.96); border:2px solid var(--void); border-radius:16px; color:var(--text);">
     {% if target %}
-      <span style="color:#6af;">{{ target.type }}</span> &middot; <strong>{{ target.label }}</strong>
-      {% if target.sublabel %}<span style="color:#666"> - {{ target.sublabel }}</span>{% endif %}
+      <span style="color:var(--pink-hot);">{{ target.type }}</span> &middot; <strong>{{ target.label }}</strong>
+      {% if target.sublabel %}<span style="color:var(--text-dim)"> - {{ target.sublabel }}</span>{% endif %}
     {% else %}
-      <em style="color:#888">General update (not tied to a specific song/album/artist)</em>
+      <em style="color:var(--text-dim)">General update (not tied to a specific song/album/artist)</em>
     {% endif %}
   </div>
   <div style="margin-top:0.5rem;">
     <input type="text" id="target-search" placeholder="Change target - search song / album / artist">
     <div id="search-results" style="margin-top:0.25rem;"></div>
   </div>
+</div>
+
+<div style="margin:1rem 0;">
+  <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Linked songs</label>
+  <div id="related-song-picked" style="display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.5rem;"></div>
+  <input type="text" id="related-song-search" placeholder="Add songs this essay also touches">
+  <div id="related-song-results" style="margin-top:0.25rem;"></div>
 </div>
 
 <div style="margin:1rem 0;">
@@ -51,7 +58,7 @@
 
 <div style="margin:1rem 0;">
   <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Body (Markdown)</label>
-  <textarea id="body" rows="14" style="width:100%; max-width:800px; background:#1a1a1a; color:#eee; border:1px solid #333; padding:0.75rem; font-family:ui-monospace, Menlo, Consolas, monospace;">{{ note.body if note else "" }}</textarea>
+  <textarea id="body" rows="14" style="width:100%; max-width:800px; background:rgba(255,255,255,0.96); color:var(--text); border:2px solid var(--void); padding:0.75rem; font-family:ui-monospace, Menlo, Consolas, monospace;">{{ note.body if note else "" }}</textarea>
 </div>
 
 <div style="margin:1rem 0;">
@@ -78,6 +85,7 @@ let targetId = {{ target_id if target_id is not none else "null" }};
 const isEdit = {{ "true" if note else "false" }};
 const noteId = {{ note.id if note else "null" }};
 const bodyBox = document.getElementById('body');
+let relatedSongs = {{ related_songs|tojson }};
 
 function insertAtCursor(text) {
   const start = bodyBox.selectionStart ?? bodyBox.value.length;
@@ -96,12 +104,12 @@ document.getElementById('target-search').addEventListener('input', async (e) => 
   if (q.length < 2) { box.innerHTML = ''; return; }
   const r = await fetch('/api/target-search?q=' + encodeURIComponent(q));
   const data = await r.json();
-  box.innerHTML = data.results.map(r => `<div class="res" data-type="${r.type}" data-id="${r.id}" style="padding:0.4rem 0.5rem; background:#1a1a1a; margin-top:0.15rem; cursor:pointer; border-radius:4px;"><span style="color:#6af;">${r.type}</span> · <strong>${r.label}</strong> <span style="color:#666">${r.sublabel || ''}</span></div>`).join('');
+  box.innerHTML = data.results.map(r => `<div class="res" data-type="${r.type}" data-id="${r.id}" style="padding:0.5rem 0.65rem; background:rgba(255,255,255,0.96); color:var(--text); margin-top:0.15rem; cursor:pointer; border-radius:14px; border:2px solid var(--void);"><span style="color:var(--pink-hot);">${r.type}</span> · <strong>${r.label}</strong> <span style="color:var(--text-dim)">${r.sublabel || ''}</span></div>`).join('');
   for (const el of box.querySelectorAll('.res')) {
     el.onclick = () => {
       targetType = el.dataset.type;
       targetId = Number(el.dataset.id);
-      document.getElementById('target-display').innerHTML = `<span style="color:#6af;">${targetType}</span> &middot; <strong>${el.querySelector('strong').textContent}</strong>`;
+      document.getElementById('target-display').innerHTML = `<span style="color:var(--pink-hot);">${targetType}</span> &middot; <strong>${el.querySelector('strong').textContent}</strong>`;
       box.innerHTML = '';
       e.target.value = '';
     };
@@ -116,10 +124,10 @@ document.getElementById('note-search').addEventListener('input', async (e) => {
   const data = await r.json();
   box.innerHTML = data.results.map(r => `
     <div class="note-res" data-url="${r.url}" data-title="${String(r.title).replace(/"/g, '&quot;')}"
-      style="padding:0.45rem 0.6rem; background:#1a1a1a; margin-top:0.2rem; cursor:pointer; border-radius:4px;">
+      style="padding:0.45rem 0.6rem; background:rgba(255,255,255,0.96); color:var(--text); margin-top:0.2rem; cursor:pointer; border-radius:14px; border:2px solid var(--void);">
       <strong>${r.title}</strong>
-      <span style="color:#666; margin-left:0.4rem;">${r.status}</span>
-      <span style="color:#888; margin-left:0.4rem;">${r.url}</span>
+      <span style="color:var(--text-dim); margin-left:0.4rem;">${r.status}</span>
+      <span style="color:var(--text-dim); margin-left:0.4rem;">${r.url}</span>
     </div>`).join('');
   for (const el of box.querySelectorAll('.note-res')) {
     el.onclick = () => {
@@ -130,12 +138,58 @@ document.getElementById('note-search').addEventListener('input', async (e) => {
   }
 });
 
+function renderRelatedSongs() {
+  const box = document.getElementById('related-song-picked');
+  box.innerHTML = relatedSongs.map(song => `
+    <span style="display:inline-flex; align-items:center; gap:0.4rem; padding:0.35rem 0.6rem; background:rgba(255,255,255,0.96); border:2px solid var(--void); border-radius:999px;">
+      <a href="${song.url || '#'}" style="text-decoration:none;">${song.title}</a>
+      <span style="color:var(--text-dim); font-size:0.85rem;">${song.artist}</span>
+      <button type="button" data-remove-song="${song.id}" style="padding:0.15rem 0.45rem;">x</button>
+    </span>
+  `).join('');
+  box.querySelectorAll('[data-remove-song]').forEach(el => {
+    el.onclick = () => {
+      relatedSongs = relatedSongs.filter(song => song.id !== Number(el.dataset.removeSong));
+      renderRelatedSongs();
+    };
+  });
+}
+
+document.getElementById('related-song-search').addEventListener('input', async (e) => {
+  const q = e.target.value.trim();
+  const box = document.getElementById('related-song-results');
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  const r = await fetch('/api/song-search?q=' + encodeURIComponent(q));
+  const data = await r.json();
+  box.innerHTML = data.results
+    .filter(song => !relatedSongs.find(existing => existing.id === song.id))
+    .map(song => `<div class="song-res" data-id="${song.id}" data-title="${String(song.title).replace(/"/g, '&quot;')}" data-artist="${String(song.artist || '').replace(/"/g, '&quot;')}" data-album="${String(song.album || '').replace(/"/g, '&quot;')}" style="padding:0.45rem 0.6rem; background:rgba(255,255,255,0.96); color:var(--text); margin-top:0.2rem; cursor:pointer; border-radius:14px; border:2px solid var(--void);"><strong>${song.title}</strong> <span style="color:var(--text-dim);">- ${song.artist} · ${song.album}</span></div>`)
+    .join('');
+  box.querySelectorAll('.song-res').forEach(el => {
+    el.onclick = () => {
+      relatedSongs.push({
+        id: Number(el.dataset.id),
+        title: el.dataset.title,
+        artist: el.dataset.artist,
+        album: el.dataset.album,
+        url: `/songs/${el.dataset.id}`,
+      });
+      renderRelatedSongs();
+      box.innerHTML = '';
+      e.target.value = '';
+    };
+  });
+});
+
+renderRelatedSongs();
+
 document.getElementById('save').onclick = async () => {
   const visEl = document.querySelector('input[name="visibility"]:checked');
   const statusEl = document.querySelector('input[name="status"]:checked');
   const body = {
     target_type: targetType,
     target_id: targetId,
+    related_song_ids: relatedSongs.map(song => song.id),
     title: document.getElementById('title').value || null,
     body: bodyBox.value,
     visibility: visEl ? visEl.value : 'public',

@@ -59,7 +59,7 @@ async function searchSongLinks() {
   const data = await r.json();
   box.innerHTML = data.results
     .filter(s => s.id !== {{ song.id }})
-    .map(s => `<div class="song-link-res" data-id="${s.id}" style="padding:0.45rem 0.6rem; background:#1a1a1a; margin-top:0.2rem; cursor:pointer; border-radius:4px;"><strong>${s.title}</strong> <span style="color:#888;">- ${s.artist} · ${s.album}</span></div>`)
+    .map(s => `<div class="song-link-res" data-id="${s.id}" style="padding:0.45rem 0.6rem; background:rgba(255,255,255,0.96); color:var(--text); margin-top:0.2rem; cursor:pointer; border-radius:14px; border:2px solid var(--void);"><strong>${s.title}</strong> <span style="color:var(--text-dim);">- ${s.artist} · ${s.album}</span></div>`)
     .join('');
   for (const el of box.querySelectorAll('.song-link-res')) {
     el.onclick = async () => {

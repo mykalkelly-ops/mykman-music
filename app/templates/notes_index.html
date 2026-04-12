@@ -16,12 +16,12 @@
 {% endif %}
 
 {% for it in items %}
-<article style="background:#1a1a1a; border-radius:8px; padding:1.25rem; margin:1rem 0;">
+<article style="background:rgba(255,255,255,0.92); border:2px solid var(--void); border-radius:18px; padding:1.25rem; margin:1rem 0;">
   <div style="display:flex; justify-content:space-between; gap:1rem; align-items:baseline;">
     <div>
       {% if it.title %}
       <h2 style="margin:0 0 0.25rem 0;">
-        <a href="/thoughts/{{ it.id }}" style="color:#eee; text-decoration:none;">{{ it.title }}</a>
+        <a href="/thoughts/{{ it.id }}" style="color:var(--text); text-decoration:none;">{{ it.title }}</a>
         {% if request.state.is_admin and it.status == "draft" %}
         <span style="font-size:0.75rem; padding:0.15rem 0.55rem; background:var(--sun); border:1.5px solid var(--void); border-radius:999px; color:var(--void); margin-left:0.4rem; vertical-align:middle;">draft</span>
         {% endif %}
@@ -30,16 +30,25 @@
         {% endif %}
       </h2>
       {% endif %}
-      <div style="color:#888; font-size:0.85rem;">
+      <div style="color:var(--text-dim); font-size:0.85rem;">
         <span style="text-transform:uppercase; letter-spacing:0.05em; color:var(--pink-hot);">{{ it.kind }}</span>
         &middot;
         <span style="text-transform:uppercase; letter-spacing:0.05em; color:#6af;">{{ it.target.type }}</span>
         &middot;
         {% if it.target.url %}<strong><a href="{{ it.target.url }}">{{ it.target.label }}</a></strong>{% else %}<strong>{{ it.target.label }}</strong>{% endif %}
-        {% if it.target.sublabel %}<span style="color:#666"> - {{ it.target.sublabel }}</span>{% endif %}
+        {% if it.target.sublabel %}<span style="color:var(--text-dim)"> - {{ it.target.sublabel }}</span>{% endif %}
         &middot; {{ it.created_at.strftime("%Y-%m-%d %H:%M") if it.created_at else "" }}
         &middot; <a href="/thoughts/{{ it.id }}">{{ it.comment_count }} comment{{ "" if it.comment_count == 1 else "s" }}</a>
       </div>
+      {% if it.related_songs %}
+      <div style="margin-top:0.5rem; display:flex; gap:0.35rem; flex-wrap:wrap;">
+        {% for song in it.related_songs %}
+          <a href="{{ song.url }}" style="display:inline-flex; gap:0.3rem; align-items:center; padding:0.25rem 0.55rem; background:rgba(255,255,255,0.96); border:2px solid var(--void); border-radius:999px; text-decoration:none;">
+            <strong>{{ song.title }}</strong><span style="color:var(--text-dim);">{{ song.artist }}</span>
+          </a>
+        {% endfor %}
+      </div>
+      {% endif %}
     </div>
     {% if request.state.is_admin %}
     <div style="display:flex; gap:0.5rem;">
@@ -80,8 +89,8 @@ async function del(id) {
 <style>
   article .body p { margin: 0.5rem 0; }
   article .body h1, article .body h2, article .body h3 { margin: 1rem 0 0.5rem 0; }
-  article .body code { background:#222; padding:0.1rem 0.35rem; border-radius:3px; }
-  article .body pre { background:#0c0c0c; padding:0.75rem; border-radius:6px; overflow-x:auto; }
-  article .body blockquote { border-left: 3px solid #444; margin: 0.5rem 0; padding-left: 0.9rem; color:#bbb; }
+  article .body code { background:rgba(255,255,255,0.96); padding:0.1rem 0.35rem; border-radius:3px; }
+  article .body pre { background:rgba(255,255,255,0.96); padding:0.75rem; border-radius:6px; overflow-x:auto; }
+  article .body blockquote { border-left: 3px solid var(--pink); margin: 0.5rem 0; padding-left: 0.9rem; color:var(--text-dim); }
 </style>
 {% endblock %}

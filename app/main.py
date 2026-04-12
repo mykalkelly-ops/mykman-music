@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 from .db import engine, get_session
 from .models import (
     Artist, Album, Song, SongLink, Playlist, PlaylistSong, Comparison, Note, Comment,
-    Person, ArtistMembership, SongCredit, Subscriber, AlbumTrack, ListenQueueItem, init_db,
+    Person, ArtistMembership, SongCredit, Subscriber, AlbumTrack, ListenQueueItem, NoteSong, init_db,
 )
 from .auth import (
     is_admin, require_admin, login as do_login, logout as do_logout,
@@ -30,7 +30,7 @@ from .glicko import update_pair
 from .pair_selector import pick_pair, note_recent_pair
 from .placement import update_bounds, maybe_finalize
 from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album
-from .notes import render_markdown, resolve_target, search_notes, search_targets
+from .notes import render_markdown, resolve_target, search_notes, search_targets, related_songs_for_note
 from .canonical import canonical_key, unique_liked_song_count, progress_metrics, linked_song_groups
 from .genres import normalize_genre
 from .reviews import (
@@ -476,6 +476,7 @@ def _notes_for(db: Session, request: Request, target_type: str, target_id: int) 
             "locked": locked,
             "teaser": _teaser(n.body) if locked else "",
             "created_at": n.created_at,
+            "related_songs": related_songs_for_note(db, n.id),
             "comments": [
                 {"id": c.id, "author_name": c.author_name, "body": c.body, "created_at": c.created_at}
                 for c in comments
@@ -861,6 +862,7 @@ def notes_index(request: Request, db: Session = Depends(get_session)):
             "created_at": n.created_at,
             "updated_at": n.updated_at,
             "target": resolve_target(db, n.target_type, n.target_id),
+            "related_songs": related_songs_for_note(db, n.id),
             "comment_count": len(comments),
             "comments": [
                 {"id": c.id, "author_name": c.author_name, "body": c.body, "created_at": c.created_at}
@@ -894,6 +896,7 @@ def thought_detail(note_id: int, request: Request, db: Session = Depends(get_ses
             "kind": note.kind or "essay",
             "created_at": note.created_at,
             "target": resolve_target(db, note.target_type, note.target_id),
+            "related_songs": related_songs_for_note(db, note.id),
             "teaser": _teaser(note.body),
         }
         return templates.TemplateResponse(request, "note_draft.html", {"it": item})
@@ -904,6 +907,7 @@ def thought_detail(note_id: int, request: Request, db: Session = Depends(get_ses
             "kind": note.kind or "essay",
             "created_at": note.created_at,
             "target": resolve_target(db, note.target_type, note.target_id),
+            "related_songs": related_songs_for_note(db, note.id),
             "teaser": _teaser(note.body),
         }
         return templates.TemplateResponse(request, "note_locked.html", {"it": item})
@@ -922,6 +926,7 @@ def thought_detail(note_id: int, request: Request, db: Session = Depends(get_ses
         "created_at": note.created_at,
         "updated_at": note.updated_at,
         "target": resolve_target(db, note.target_type, note.target_id),
+        "related_songs": related_songs_for_note(db, note.id),
         "comment_count": len(comments),
         "comments": [
             {"id": c.id, "author_name": c.author_name, "body": c.body, "created_at": c.created_at}
@@ -952,7 +957,7 @@ def notes_new(
     target = resolve_target(db, target_type, target_id) if target_type != "general" else None
     return templates.TemplateResponse(
         request, "notes_edit.html",
-        {"note": None, "target_type": target_type, "target_id": target_id, "target": target},
+        {"note": None, "target_type": target_type, "target_id": target_id, "target": target, "related_songs": []},
     )
 
 
@@ -966,13 +971,14 @@ def notes_edit(note_id: int, request: Request, db: Session = Depends(get_session
     target = resolve_target(db, n.target_type, n.target_id)
     return templates.TemplateResponse(
         request, "notes_edit.html",
-        {"note": n, "target_type": n.target_type, "target_id": n.target_id, "target": target},
+        {"note": n, "target_type": n.target_type, "target_id": n.target_id, "target": target, "related_songs": related_songs_for_note(db, n.id)},
     )
 
 
 class NoteBody(BaseModel):
     target_type: str = "general"
     target_id: int | None = None
+    related_song_ids: list[int] = []
     title: str | None = None
     body: str = ""
     visibility: str = "public"
@@ -999,6 +1005,15 @@ def create_note(body: NoteBody, request: Request, db: Session = Depends(get_sess
     )
     db.add(n)
     db.commit()
+    if body.related_song_ids:
+        seen = set()
+        for song_id in body.related_song_ids:
+            if song_id in seen:
+                continue
+            seen.add(song_id)
+            if db.get(Song, song_id) is not None:
+                db.add(NoteSong(note_id=n.id, song_id=song_id))
+        db.commit()
     return {"id": n.id}
 
 
@@ -1016,6 +1031,14 @@ def update_note(note_id: int, body: NoteBody, request: Request, db: Session = De
         n.status = body.status
     if body.kind in ("essay", "review", "fragment", "note", "update"):
         n.kind = body.kind
+    db.query(NoteSong).filter(NoteSong.note_id == n.id).delete()
+    seen = set()
+    for song_id in body.related_song_ids:
+        if song_id in seen:
+            continue
+        seen.add(song_id)
+        if db.get(Song, song_id) is not None:
+            db.add(NoteSong(note_id=n.id, song_id=song_id))
     db.commit()
     return {"ok": True}
 

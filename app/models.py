@@ -171,6 +171,14 @@ class Note(Base):
     kind = Column(String, nullable=False, default="essay")  # 'essay'|'review'|'fragment'|'note'|'update'
 
 
+class NoteSong(Base):
+    __tablename__ = "note_songs"
+    id = Column(Integer, primary_key=True)
+    note_id = Column(Integer, ForeignKey("notes.id"), nullable=False, index=True)
+    song_id = Column(Integer, ForeignKey("songs.id"), nullable=False, index=True)
+    __table_args__ = (UniqueConstraint("note_id", "song_id", name="uq_note_song"),)
+
+
 class Subscriber(Base):
     __tablename__ = "subscribers"
     id = Column(Integer, primary_key=True)
@@ -331,6 +339,13 @@ def init_db(engine):
         except Exception:
             try:
                 ListenQueueItem.__table__.create(bind=conn)
+            except Exception:
+                pass
+        try:
+            insp.get_columns("note_songs")
+        except Exception:
+            try:
+                NoteSong.__table__.create(bind=conn)
             except Exception:
                 pass
     # notes table is created by create_all above if missing

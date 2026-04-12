@@ -2,7 +2,7 @@
 import markdown as md
 from sqlalchemy.orm import Session
 
-from .models import Song, Album, Artist, Note
+from .models import Song, Album, Artist, Note, NoteSong
 
 
 def render_markdown(text: str) -> str:
@@ -83,3 +83,25 @@ def search_notes(db: Session, q: str, limit: int = 12) -> list[dict]:
             }
         )
     return items
+
+
+def related_songs_for_note(db: Session, note_id: int) -> list[dict]:
+    rows = (
+        db.query(Song)
+        .join(NoteSong, NoteSong.song_id == Song.id)
+        .join(Song.album)
+        .join(Album.artist)
+        .filter(NoteSong.note_id == note_id)
+        .order_by(Artist.name.asc(), Album.title.asc(), Song.title.asc())
+        .all()
+    )
+    return [
+        {
+            "id": song.id,
+            "title": song.title,
+            "artist": song.album.artist.name if song.album and song.album.artist else "",
+            "album": song.album.title if song.album else "",
+            "url": f"/songs/{song.id}",
+        }
+        for song in rows
+    ]

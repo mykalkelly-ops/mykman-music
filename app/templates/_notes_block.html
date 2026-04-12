@@ -11,13 +11,13 @@
   {% endif %}
   {% for n in notes %}
   {% set it = n %}
-  <article style="background:#1a1a1a; border-radius:8px; padding:1rem 1.25rem; margin:0.75rem 0;">
+  <article style="background:rgba(255,255,255,0.92); border:2px solid var(--void); border-radius:18px; padding:1rem 1.25rem; margin:0.75rem 0;">
     <div style="display:flex; justify-content:space-between;">
       <div>
         {% if n.title %}<h3 style="margin:0 0 0.25rem 0;">{{ n.title }}
           {% if n.locked %}<span style="font-size:0.7rem; padding:0.1rem 0.5rem; background:var(--pink-soft); border:1.5px solid var(--void); border-radius:999px; color:var(--void); margin-left:0.4rem;">🔒 subscribers only</span>{% endif %}
         </h3>{% endif %}
-        <div style="color:#666; font-size:0.8rem;">{{ n.created_at.strftime("%Y-%m-%d") if n.created_at else "" }}</div>
+        <div style="color:var(--text-dim); font-size:0.8rem;">{{ n.created_at.strftime("%Y-%m-%d") if n.created_at else "" }}</div>
       </div>
       {% if request.state.is_admin %}
       <a href="/notes/{{ n.id }}/edit"><button>Edit</button></a>
@@ -28,6 +28,15 @@
     <div style="margin-top:0.4rem;"><a href="/thoughts/{{ n.id }}">unlock to read ♡</a></div>
     {% else %}
     <div class="note-body" style="margin-top:0.5rem; line-height:1.55;">{{ n.body_html|safe }}</div>
+    {% if n.related_songs %}
+    <div style="margin-top:0.65rem; display:flex; gap:0.35rem; flex-wrap:wrap;">
+      {% for song in n.related_songs %}
+      <a href="{{ song.url }}" style="display:inline-flex; gap:0.3rem; align-items:center; padding:0.25rem 0.55rem; background:rgba(255,255,255,0.96); border:2px solid var(--void); border-radius:999px; text-decoration:none;">
+        <strong>{{ song.title }}</strong><span style="color:var(--text-dim);">{{ song.artist }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
     {% include "_comments_block.html" %}
     {% endif %}
   </article>
@@ -36,6 +45,6 @@
 <style>
   .note-body p { margin: 0.5rem 0; }
   .note-body h1,.note-body h2,.note-body h3 { margin: 1rem 0 0.5rem 0; }
-  .note-body code { background:#222; padding:0.1rem 0.35rem; border-radius:3px; }
-  .note-body blockquote { border-left:3px solid #444; padding-left:0.9rem; color:#bbb; margin:0.5rem 0; }
+  .note-body code { background:rgba(255,255,255,0.96); padding:0.1rem 0.35rem; border-radius:3px; }
+  .note-body blockquote { border-left:3px solid var(--pink); padding-left:0.9rem; color:var(--text-dim); margin:0.5rem 0; }
 </style>
