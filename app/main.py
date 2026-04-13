@@ -403,7 +403,7 @@ def songs_list(
 
 
 @app.get("/albums", response_class=HTMLResponse)
-def albums_page(request: Request, db: Session = Depends(get_session)):
+def albums_page(request: Request, unknown_first: int = 0, db: Session = Depends(get_session)):
     reviewed = {
         tid for (tid,) in db.query(Note.target_id).filter(Note.target_type == "album", Note.target_id.isnot(None)).distinct().all()
     }
@@ -411,8 +411,13 @@ def albums_page(request: Request, db: Session = Depends(get_session)):
     all_albums = album_scores(db)
     albums_main = [a for a in all_albums if a.release_type == "album"]
     albums_eps = [a for a in all_albums if a.release_type == "ep"]
+    if request.state.is_admin and unknown_first:
+        albums_main.sort(key=lambda a: (a.displayed_total_tracks is not None, -a.score, a.title.lower()))
+        albums_eps.sort(key=lambda a: (a.displayed_total_tracks is not None, -a.score, a.title.lower()))
     return templates.TemplateResponse(
-        request, "albums.html", {"albums": albums_main, "eps": albums_eps, "reviewed_ids": reviewed, "covers": covers}
+        request,
+        "albums.html",
+        {"albums": albums_main, "eps": albums_eps, "reviewed_ids": reviewed, "covers": covers, "unknown_first": bool(unknown_first)},
     )
 
 

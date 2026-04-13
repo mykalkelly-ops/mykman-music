@@ -2,6 +2,15 @@
 {% block content %}
 <h1>Albums</h1>
 <p style="color:#888">Derived from song ratings. Unliked songs pull the album down. Score is on Glicko scale (~1500 average). Totals use full track counts when known; otherwise they stay unknown instead of pretending the imported subset is the whole album.</p>
+{% if request.state.is_admin %}
+<div style="margin:0.75rem 0 1rem 0; display:flex; gap:0.5rem; flex-wrap:wrap;">
+  {% if unknown_first %}
+    <a href="/albums"><button type="button">Back to ranked view</button></a>
+  {% else %}
+    <a href="/albums?unknown_first=1"><button type="button">Unknown totals first</button></a>
+  {% endif %}
+</div>
+{% endif %}
 <h2>Albums</h2>
 <table>
   <thead><tr><th>#</th><th>Album</th><th>Artist</th><th>Score</th><th>Liked / Total</th><th>Avg RD</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
