@@ -3,7 +3,7 @@
 <h1>Artists</h1>
 <p style="color:#888">Weighted average of album scores. More liked songs = higher.</p>
 <table>
-  <thead><tr><th>#</th><th>Artist</th><th>Score</th><th>Albums</th><th>Liked / Total Songs</th><th>Review</th></tr></thead>
+  <thead><tr><th>#</th><th>Artist</th><th>Score</th><th>Albums</th><th>Liked / Total Songs</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
   <tbody>
   {% for a in artists %}
     <tr>
@@ -19,8 +19,32 @@
           <a href="/notes/new?target_type=artist&target_id={{ a.artist_id }}" style="color:#555">+</a>
         {% endif %}
       </td>
+      {% if request.state.is_admin %}
+      <td><button type="button" data-queue-type="artist" data-queue-id="{{ a.artist_id }}" data-queue-label="{{ a.name|e }}">Queue</button></td>
+      {% endif %}
     </tr>
   {% endfor %}
   </tbody>
 </table>
+{% if request.state.is_admin %}
+<script>
+document.querySelectorAll('[data-queue-type]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const targetType = btn.dataset.queueType;
+    const targetId = Number(btn.dataset.queueId || 0);
+    if (!targetId) return;
+    const note = `Queued from the artists page`;
+    const resp = await fetch('/api/listen-next', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ target_type: targetType, target_id: targetId, note })
+    });
+    if (resp.ok) {
+      btn.textContent = 'Queued';
+      btn.disabled = true;
+    }
+  });
+});
+</script>
+{% endif %}
 {% endblock %}

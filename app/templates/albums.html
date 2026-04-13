@@ -4,7 +4,7 @@
 <p style="color:#888">Derived from song ratings. Unliked songs pull the album down. Score is on Glicko scale (~1500 average). Totals use full track counts when known; otherwise they stay unknown instead of pretending the imported subset is the whole album.</p>
 <h2>Albums</h2>
 <table>
-  <thead><tr><th>#</th><th>Album</th><th>Artist</th><th>Score</th><th>Liked / Total</th><th>Avg RD</th><th>Review</th></tr></thead>
+  <thead><tr><th>#</th><th>Album</th><th>Artist</th><th>Score</th><th>Liked / Total</th><th>Avg RD</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
   <tbody>
   {% for a in albums %}
     <tr>
@@ -21,6 +21,9 @@
           <a href="/notes/new?target_type=album&target_id={{ a.album_id }}" style="color:#555">+</a>
         {% endif %}
       </td>
+      {% if request.state.is_admin %}
+      <td><button type="button" data-queue-type="album" data-queue-id="{{ a.album_id }}" data-queue-label="{{ a.title|e }}">Queue</button></td>
+      {% endif %}
     </tr>
   {% endfor %}
   </tbody>
@@ -28,7 +31,7 @@
 {% if eps %}
 <h2>EPs</h2>
 <table>
-  <thead><tr><th>#</th><th>EP</th><th>Artist</th><th>Score</th><th>Liked / Total</th><th>Avg RD</th><th>Review</th></tr></thead>
+  <thead><tr><th>#</th><th>EP</th><th>Artist</th><th>Score</th><th>Liked / Total</th><th>Avg RD</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
   <tbody>
   {% for a in eps %}
     <tr>
@@ -45,9 +48,33 @@
           <a href="/notes/new?target_type=album&target_id={{ a.album_id }}" style="color:#555">+</a>
         {% endif %}
       </td>
+      {% if request.state.is_admin %}
+      <td><button type="button" data-queue-type="album" data-queue-id="{{ a.album_id }}" data-queue-label="{{ a.title|e }}">Queue</button></td>
+      {% endif %}
     </tr>
   {% endfor %}
   </tbody>
 </table>
+{% endif %}
+{% if request.state.is_admin %}
+<script>
+document.querySelectorAll('[data-queue-type]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const targetType = btn.dataset.queueType;
+    const targetId = Number(btn.dataset.queueId || 0);
+    if (!targetId) return;
+    const note = `Queued from the ${targetType === 'album' ? 'albums' : 'artists'} page`;
+    const resp = await fetch('/api/listen-next', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ target_type: targetType, target_id: targetId, note })
+    });
+    if (resp.ok) {
+      btn.textContent = 'Queued';
+      btn.disabled = true;
+    }
+  });
+});
+</script>
 {% endif %}
 {% endblock %}
