@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Artists</h1>
-<p style="color:#888">Weighted average of album scores. More liked songs = higher.</p>
+<p style="color:#888">Weighted average of album scores. More liked songs = higher. Discography progress uses the releases and track totals we currently know, so it gets smarter as you enrich/fill totals.</p>
 <table>
-  <thead><tr><th>#</th><th>Artist</th><th>Score</th><th>Albums</th><th>Liked / Total Songs</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
+  <thead><tr><th>#</th><th>Artist</th><th>Score</th><th>Albums</th><th>Liked / Total Songs</th><th>Discography</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
   <tbody>
   {% for a in artists %}
     <tr>
@@ -12,6 +12,12 @@
       <td>{{ "%.0f"|format(a.score) }}</td>
       <td>{{ a.album_count }}</td>
       <td>{{ a.liked_songs }} / {{ a.total_songs }}</td>
+      <td style="min-width:190px;">
+        <div style="height:0.7rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
+          <div style="height:100%; width:{{ a.discography_percent }}%; background:linear-gradient(90deg, #ff7db8, #ffd34d);"></div>
+        </div>
+        <div style="font-size:0.78rem; color:#7a5a88; margin-top:0.25rem;">{{ a.discography_percent }}% · {{ a.listened_tracks }} / {{ a.known_tracks }} tracks</div>
+      </td>
       <td>
         {% if a.artist_id in reviewed_ids %}
           <a href="/artists/{{ a.artist_id }}#notes">Read</a>

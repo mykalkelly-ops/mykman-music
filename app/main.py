@@ -557,6 +557,7 @@ def artist_detail(artist_id: int, request: Request, db: Session = Depends(get_se
     if ar is None:
         return HTMLResponse("Artist not found", status_code=404)
     albums_sorted = sorted(ar.albums, key=lambda a: -(a.year or 0))
+    artist_summary = next((row for row in artist_scores(db) if row.artist_id == artist_id), None)
 
     # Memberships
     memberships = db.query(ArtistMembership).filter(ArtistMembership.artist_id == artist_id).all()
@@ -600,6 +601,7 @@ def artist_detail(artist_id: int, request: Request, db: Session = Depends(get_se
         request, "artist_detail.html",
         {
             "artist": ar,
+            "artist_summary": artist_summary,
             "albums": albums_sorted,
             "notes": _notes_for(db, request, "artist", artist_id),
             "members": member_rows,
