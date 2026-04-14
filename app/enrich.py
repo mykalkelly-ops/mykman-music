@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from . import musicbrainz as mb
 from . import art
 from .models import Artist, Album, Person, ArtistMembership, AlbumTrack
+from .scoring import effective_album_total_tracks
 
 # Module-level progress for the bulk background task.
 progress = {
@@ -260,6 +261,7 @@ def enrich_album(db: Session, album: Album) -> dict:
         "release_type": album.release_group_type,
         "cover": album.cover_path,
         "track_count": fresh_track_count,
+        "total_track_count": effective_album_total_tracks(album),
     }
 
 

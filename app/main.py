@@ -559,6 +559,7 @@ def album_detail(album_id: int, request: Request, db: Session = Depends(get_sess
         request, "album_detail.html",
         {
             "album": al,
+            "effective_total_tracks": effective_album_total_tracks(al),
             "track_rows": _album_track_rows(al),
             "star_tier": myk_tier,
             "render_myks": render_myks,
@@ -720,7 +721,7 @@ def set_album_meta(album_id: int, body: AlbumMetaBody, request: Request, db: Ses
     db.commit()
     return {
         "ok": True,
-        "total_track_count": album.total_track_count,
+        "total_track_count": effective_album_total_tracks(album),
         "rankable": is_rankable_album(album),
     }
 

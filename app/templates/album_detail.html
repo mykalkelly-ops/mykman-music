@@ -11,7 +11,7 @@
 <div class="panel" style="margin-top:1rem;">
   <div style="font-size:0.9rem; color:#7a5a88;">
     Total tracks:
-    <strong id="album-total-label">{{ album.total_track_count if album.total_track_count else "?" }}</strong>
+    <strong id="album-total-label">{{ effective_total_tracks if effective_total_tracks else "?" }}</strong>
     {% if not is_rankable_album(album) %}
       <span style="margin-left:0.5rem; color:#d33d8f;">Excluded from album rankings as a single/short release</span>
     {% endif %}
