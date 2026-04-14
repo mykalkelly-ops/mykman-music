@@ -119,16 +119,27 @@ def _listened_song_count(db: Session) -> int:
     album_ids = _listened_album_ids(db)
     if not album_ids:
         return 0
-    songs = db.query(Song).options(joinedload(Song.album).joinedload(Album.artist)).filter(Song.album_id.in_(album_ids)).all()
+    albums = (
+        db.query(Album)
+        .options(joinedload(Album.artist), joinedload(Album.songs))
+        .filter(Album.id.in_(album_ids))
+        .all()
+    )
     groups = linked_song_groups(db)
-    seen: set[tuple[str, str, int] | tuple[str, int]] = set()
-    for song in songs:
-        gid = groups.get(song.id)
-        if gid is not None:
-            seen.add(("linked", gid))
-        else:
-            seen.add(canonical_key(song))
-    return len(seen)
+    total = 0
+    for album in albums:
+        if album.total_track_count:
+            total += int(album.total_track_count)
+            continue
+        seen: set[tuple[str, str, int] | tuple[str, int]] = set()
+        for song in album.songs:
+            gid = groups.get(song.id)
+            if gid is not None:
+                seen.add(("linked", gid))
+            else:
+                seen.add(canonical_key(song))
+        total += len(seen)
+    return total
 
 
 def _liked_song_count(db: Session) -> int:
