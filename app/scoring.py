@@ -65,9 +65,17 @@ class AlbumScore:
     release_type: str
 
 
+def effective_album_total_tracks(album: Album) -> int | None:
+    if album.total_track_count:
+        return int(album.total_track_count)
+    if getattr(album, "tracks", None):
+        return len(album.tracks)
+    return None
+
+
 def is_rankable_album(album: Album) -> bool:
     title = (album.title or "").lower()
-    total_tracks = album.total_track_count or 0
+    total_tracks = effective_album_total_tracks(album) or 0
     if "single" in title:
         return False
     if total_tracks and total_tracks <= 3:
@@ -79,7 +87,8 @@ def classify_release_type(album: Album) -> str:
     title = (album.title or "").lower()
     if (album.release_group_type or "").lower() == "ep" or "ep" in title:
         return "ep"
-    if "single" in title or ((album.total_track_count or 0) and (album.total_track_count or 0) <= 3):
+    total_tracks = effective_album_total_tracks(album) or 0
+    if "single" in title or (total_tracks and total_tracks <= 3):
         return "single"
     return "album"
 
@@ -136,7 +145,7 @@ def album_scores(db: Session) -> list[AlbumScore]:
                 artist_name=album.artist.name if album.artist else "",
                 score=score,
                 song_count=len(songs),
-                displayed_total_tracks=album.total_track_count or None,
+                displayed_total_tracks=effective_album_total_tracks(album),
                 liked_count=liked_count,
                 avg_rd=rd_sum / len(songs),
                 release_type=classify_release_type(album),
@@ -239,7 +248,7 @@ def artist_scores(db: Session) -> list[ArtistScore]:
                 album_weight += weight
             if album_weight == 0:
                 continue
-            album_total_tracks = album.total_track_count or album_song_count
+            album_total_tracks = effective_album_total_tracks(album) or album_song_count
             local_known_tracks += album_total_tracks
             if album.confirmed_listened or album_liked:
                 listened_albums += 1

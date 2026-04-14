@@ -29,7 +29,7 @@ from .auth import (
 from .glicko import update_pair
 from .pair_selector import pick_pair, note_recent_pair
 from .placement import update_bounds, maybe_finalize
-from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type
+from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks
 from .notes import render_markdown, resolve_target, search_notes, search_targets, related_songs_for_note
 from .canonical import canonical_key, unique_liked_song_count, progress_metrics, linked_song_groups
 from .genres import normalize_genre
@@ -128,8 +128,9 @@ def _listened_song_count(db: Session) -> int:
     groups = linked_song_groups(db)
     total = 0
     for album in albums:
-        if album.total_track_count:
-            total += int(album.total_track_count)
+        effective_total = effective_album_total_tracks(album)
+        if effective_total:
+            total += int(effective_total)
             continue
         seen: set[tuple[str, str, int] | tuple[str, int]] = set()
         for song in album.songs:
