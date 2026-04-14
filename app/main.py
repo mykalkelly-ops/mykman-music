@@ -29,7 +29,7 @@ from .auth import (
 from .glicko import update_pair
 from .pair_selector import pick_pair, note_recent_pair
 from .placement import update_bounds, maybe_finalize
-from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks
+from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks, _expand_artist_genders
 from .notes import render_markdown, resolve_target, search_notes, search_targets, related_songs_for_note
 from .canonical import canonical_key, unique_liked_song_count, progress_metrics, linked_song_groups
 from .genres import normalize_genre
@@ -1461,6 +1461,9 @@ def stats_page(request: Request, db: Session = Depends(get_session)):
         liked_songs,
     )
     by_gender = gender_breakdown(db)
+    max_genre_count = max((v for _, v in by_genre), default=1)
+    max_decade_count = max((v for _, v in by_decade), default=1)
+    max_gender_count = max((count for _, count, _ in by_gender), default=1)
 
     total_songs_in_lib = _listened_song_count(db)
     total_liked = _liked_song_count(db)
@@ -1477,8 +1480,18 @@ def stats_page(request: Request, db: Session = Depends(get_session)):
             .scalar()
         )
         if avg is not None:
-            playlist_rows.append((p.name, p.year, p.month, float(avg)))
-    playlist_rows.sort(key=lambda r: -r[3])
+            count = (
+                db.query(func.count(PlaylistSong.id))
+                .filter(PlaylistSong.playlist_id == p.id)
+                .scalar()
+                or 0
+            )
+            playlist_rows.append({"id": p.id, "name": p.name, "year": p.year, "month": p.month, "avg": float(avg), "count": count})
+    playlist_rows.sort(key=lambda r: -r["avg"])
+    max_playlist_avg = max((row["avg"] for row in playlist_rows), default=1.0)
+
+    top_artists = artist_scores(db)[:10]
+    max_artist_score = max((row.score for row in top_artists), default=1.0)
 
     return templates.TemplateResponse(
         request, "stats.html",
@@ -1490,7 +1503,63 @@ def stats_page(request: Request, db: Session = Depends(get_session)):
             "by_genre": by_genre,
             "by_decade": by_decade,
             "by_gender": by_gender,
+            "max_genre_count": max_genre_count,
+            "max_decade_count": max_decade_count,
+            "max_gender_count": max_gender_count,
             "playlist_rows": playlist_rows,
+            "max_playlist_avg": max_playlist_avg,
+            "top_artists": top_artists,
+            "max_artist_score": max_artist_score,
+        },
+    )
+
+
+def _gender_category_for_song(db: Session, song: Song) -> str:
+    credits = (
+        db.query(SongCredit)
+        .filter(SongCredit.song_id == song.id, SongCredit.role.in_(("primary", "featured")))
+        .all()
+    )
+    all_genders: set[str] = set()
+    for credit in credits:
+        all_genders |= _expand_artist_genders(db, credit.artist_id)
+    named = {gender for gender in all_genders if gender in ("male", "female", "nonbinary")}
+    if len(named) >= 2:
+        return "mixed"
+    if len(named) == 1:
+        return next(iter(named))
+    return "unknown"
+
+
+@app.get("/stats/gender/{category}", response_class=HTMLResponse)
+def stats_gender_detail(category: str, request: Request, db: Session = Depends(get_session)):
+    allowed = {"male", "female", "nonbinary", "mixed", "unknown"}
+    if category not in allowed:
+        return HTMLResponse("Gender bucket not found", status_code=404)
+    songs = (
+        db.query(Song)
+        .options(joinedload(Song.album).joinedload(Album.artist))
+        .filter(Song.comparison_count > 0)
+        .order_by(Song.glicko_rating.desc())
+        .all()
+    )
+    songs_with_stars = []
+    for song in songs:
+        if _gender_category_for_song(db, song) == category:
+            songs_with_stars.append((song, myk_tier(song.glicko_rating, song.glicko_rd)))
+    reviewed_song_ids = {
+        tid for (tid,) in db.query(Note.target_id).filter(Note.target_type == "song", Note.target_id.isnot(None)).distinct().all()
+    }
+    return templates.TemplateResponse(
+        request,
+        "songs.html",
+        {
+            "songs_with_stars": songs_with_stars[:200],
+            "q": f"gender:{category}",
+            "limit": 200,
+            "tier": None,
+            "reviewed_ids": reviewed_song_ids,
+            "render_myks": render_myks,
         },
     )
 

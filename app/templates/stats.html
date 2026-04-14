@@ -13,24 +13,102 @@
 
 <p style="color:#888; font-size:0.85rem;">Estimated progress toward a stable ranking: {{ progress.completed }} of about {{ progress.target }} useful comparisons across {{ progress.unique_liked }} unique liked songs.</p>
 
+<section class="panel" style="padding:1rem 1.25rem; margin-bottom:1.25rem;">
+  <h2 style="margin-top:0;">Quick read</h2>
+  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:1rem;">
+    <div>
+      <div style="font-size:0.8rem; color:#7a5a88; text-transform:uppercase; letter-spacing:0.08em;">Biggest liked genre</div>
+      <div style="font-size:1.6rem; font-weight:800;">{{ by_genre[0][0] if by_genre else "Unknown" }}</div>
+      <div style="color:#7a5a88;">{{ by_genre[0][1] if by_genre else 0 }} liked songs</div>
+    </div>
+    <div>
+      <div style="font-size:0.8rem; color:#7a5a88; text-transform:uppercase; letter-spacing:0.08em;">Dominant decade</div>
+      <div style="font-size:1.6rem; font-weight:800;">{{ by_decade[0][0] if by_decade else "Unknown" }}</div>
+      <div style="color:#7a5a88;">{{ by_decade[0][1] if by_decade else 0 }} liked songs</div>
+    </div>
+    <div>
+      <div style="font-size:0.8rem; color:#7a5a88; text-transform:uppercase; letter-spacing:0.08em;">Best month right now</div>
+      <div style="font-size:1.6rem; font-weight:800;">{{ playlist_rows[0]["name"] if playlist_rows else "None yet" }}</div>
+      <div style="color:#7a5a88;">{{ "%.0f"|format(playlist_rows[0]["avg"]) if playlist_rows else "" }} average rating</div>
+    </div>
+  </div>
+</section>
+
 <h2>Liked songs by genre</h2>
-<table><thead><tr><th>Genre</th><th>Count</th></tr></thead><tbody>
-{% for k, v in by_genre %}<tr><td><a href="/songs?q={{ k | urlencode }}">{{ k }}</a></td><td>{{ v }}</td></tr>{% endfor %}
+<table><thead><tr><th>Genre</th><th>Count</th><th>Visual</th></tr></thead><tbody>
+{% for k, v in by_genre %}
+<tr>
+  <td><a href="/songs?q={{ k | urlencode }}">{{ k }}</a></td>
+  <td>{{ v }}</td>
+  <td style="min-width:220px;">
+    <div style="height:0.75rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
+      <div style="height:100%; width:{{ (v / max_genre_count * 100) if max_genre_count else 0 }}%; background:linear-gradient(90deg, #ff7db8, #ffd34d);"></div>
+    </div>
+  </td>
+</tr>
+{% endfor %}
 </tbody></table>
 
 <h2>Liked songs by decade</h2>
-<table><thead><tr><th>Decade</th><th>Count</th></tr></thead><tbody>
-{% for k, v in by_decade %}<tr><td><a href="/songs?q={{ k[:4] }}">{{ k }}</a></td><td>{{ v }}</td></tr>{% endfor %}
+<table><thead><tr><th>Decade</th><th>Count</th><th>Visual</th></tr></thead><tbody>
+{% for k, v in by_decade %}
+<tr>
+  <td><a href="/songs?q={{ k[:4] }}">{{ k }}</a></td>
+  <td>{{ v }}</td>
+  <td style="min-width:220px;">
+    <div style="height:0.75rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
+      <div style="height:100%; width:{{ (v / max_decade_count * 100) if max_decade_count else 0 }}%; background:linear-gradient(90deg, #7ee3ff, #8effb3);"></div>
+    </div>
+  </td>
+</tr>
+{% endfor %}
 </tbody></table>
 
 <h2>Rated songs by person gender</h2>
 <p style="color:#888; font-size:0.85rem;">Derived from song credits -> artist memberships -> person.gender. "mixed" means two or more distinct genders among credited acts.</p>
-<table><thead><tr><th>Category</th><th>Count</th><th>Avg Rating</th></tr></thead><tbody>
-{% for cat, count, avg in by_gender %}<tr><td>{{ cat }}</td><td>{{ count }}</td><td>{{ "%.0f"|format(avg) if count else "" }}</td></tr>{% endfor %}
+<table><thead><tr><th>Category</th><th>Count</th><th>Avg Rating</th><th>Visual</th></tr></thead><tbody>
+{% for cat, count, avg in by_gender %}
+<tr>
+  <td><a href="/stats/gender/{{ cat }}">{{ cat }}</a></td>
+  <td>{{ count }}</td>
+  <td>{{ "%.0f"|format(avg) if count else "" }}</td>
+  <td style="min-width:220px;">
+    <div style="height:0.75rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
+      <div style="height:100%; width:{{ (count / max_gender_count * 100) if max_gender_count else 0 }}%; background:linear-gradient(90deg, #c39bff, #ff9bdd);"></div>
+    </div>
+  </td>
+</tr>
+{% endfor %}
+</tbody></table>
+
+<h2>Top artists by score</h2>
+<table><thead><tr><th>Artist</th><th>Score</th><th>Visual</th></tr></thead><tbody>
+{% for a in top_artists %}
+<tr>
+  <td><a href="/artists/{{ a.artist_id }}">{{ a.name }}</a></td>
+  <td>{{ "%.0f"|format(a.score) }}</td>
+  <td style="min-width:220px;">
+    <div style="height:0.75rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
+      <div style="height:100%; width:{{ (a.score / max_artist_score * 100) if max_artist_score else 0 }}%; background:linear-gradient(90deg, #ff8b5e, #ffe16b);"></div>
+    </div>
+  </td>
+</tr>
+{% endfor %}
 </tbody></table>
 
 <h2>Monthly playlists by average rating</h2>
-<table><thead><tr><th>Playlist</th><th>Avg Rating</th></tr></thead><tbody>
-{% for name, year, month, avg in playlist_rows %}<tr><td>{{ name }}</td><td>{{ "%.0f"|format(avg) }}</td></tr>{% endfor %}
+<table><thead><tr><th>Playlist</th><th>Avg Rating</th><th>Songs</th><th>Visual</th></tr></thead><tbody>
+{% for row in playlist_rows %}
+<tr>
+  <td><a href="/playlists/{{ row['id'] }}">{{ row["name"] }}</a></td>
+  <td>{{ "%.0f"|format(row["avg"]) }}</td>
+  <td>{{ row["count"] }}</td>
+  <td style="min-width:220px;">
+    <div style="height:0.75rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
+      <div style="height:100%; width:{{ (row['avg'] / max_playlist_avg * 100) if max_playlist_avg else 0 }}%; background:linear-gradient(90deg, #ff7db8, #7ee3ff);"></div>
+    </div>
+  </td>
+</tr>
+{% endfor %}
 </tbody></table>
 {% endblock %}
