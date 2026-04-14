@@ -50,6 +50,7 @@
     <div id="collab-picked" style="margin-top:0.5rem;"></div>
     <button id="collab-save">Save collab</button>
   </div>
+  <div id="prompt-status" style="display:none; margin-top:0.7rem; color:#d33d8f; font-size:0.85rem;"></div>
 </div>
 
 <script>
@@ -283,6 +284,8 @@ function resetPromptUI() {
   document.getElementById('prompt-q1').style.display = 'block';
   document.getElementById('prompt-solo').style.display = 'none';
   document.getElementById('prompt-collab').style.display = 'none';
+  document.getElementById('prompt-status').style.display = 'none';
+  document.getElementById('prompt-status').textContent = '';
   collabPicked = [];
   renderCollabPicked();
 }
@@ -295,10 +298,17 @@ function renderCollabPicked() {
 
 async function quickClassify(payload) {
   const id = Number(document.getElementById('prompt').dataset.artistId);
-  await fetch(`/api/artists/${id}/quick-classify`, {
+  const resp = await fetch(`/api/artists/${id}/quick-classify`, {
     method:'POST', headers:{'Content-Type':'application/json'},
+    credentials:'same-origin',
     body: JSON.stringify(payload),
   });
+  if (!resp.ok) {
+    const status = document.getElementById('prompt-status');
+    status.style.display = 'block';
+    status.textContent = resp.status === 403 ? 'admin session expired. log in again.' : 'could not save artist info';
+    return;
+  }
   rememberPromptId(id);
   resetPromptUI();
   loadPrompt();

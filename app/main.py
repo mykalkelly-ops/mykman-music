@@ -876,8 +876,10 @@ def next_artist_prompt(exclude: str | None = None, db: Session = Depends(get_ses
         if a.kind == "solo":
             if membership_count > 1 or child_count > 0 or collab_hint:
                 return True
-            if a.gender is None:
+            if a.gender is None or a.gender == "Unknown":
                 return True
+            if a.gender in ("M", "F", "NB"):
+                return False
             if person_members:
                 person = db.get(Person, person_members[0].person_id)
                 if person is None or person.gender == "unknown":
@@ -2042,8 +2044,12 @@ def quick_classify(artist_id: int, body: QuickClassifyBody, request: Request, db
             db.add(person)
             db.flush()
         else:
-            if person.gender == "unknown":
+            if person.gender == "unknown" or gender != "unknown":
                 person.gender = gender
+        # Normalize any duplicate same-name person records that older backfills created.
+        for other in db.query(Person).filter(Person.name == artist.name, Person.id != person.id).all():
+            if other.gender == "unknown" or gender != "unknown":
+                other.gender = gender
         # add membership if missing
         existing = (
             db.query(ArtistMembership)
