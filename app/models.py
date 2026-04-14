@@ -30,6 +30,7 @@ class Artist(Base):
     internet_track_total = Column(Integer, nullable=True)
     internet_synced_at = Column(DateTime, nullable=True)
     albums = relationship("Album", back_populates="artist", cascade="all, delete-orphan")
+    releases = relationship("ArtistRelease", back_populates="artist", cascade="all, delete-orphan")
 
 
 class Person(Base):
@@ -53,6 +54,19 @@ class ArtistMembership(Base):
     role = Column(String, nullable=False, default="member")  # 'member'|'frontperson'|'producer'|'guest'
     start_year = Column(Integer, nullable=True)
     end_year = Column(Integer, nullable=True)
+
+
+class ArtistRelease(Base):
+    __tablename__ = "artist_releases"
+    id = Column(Integer, primary_key=True)
+    artist_id = Column(Integer, ForeignKey("artists.id"), nullable=False, index=True)
+    release_group_mb_id = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=False)
+    year = Column(Integer, nullable=True)
+    primary_type = Column(String, nullable=True)  # album | ep | single
+    track_count = Column(Integer, nullable=True)
+    artist = relationship("Artist", back_populates="releases")
+    __table_args__ = (UniqueConstraint("artist_id", "release_group_mb_id", name="uq_artist_release_group"),)
 
 
 class SongCredit(Base):
@@ -347,6 +361,13 @@ def init_db(engine):
         except Exception:
             try:
                 ListenQueueItem.__table__.create(bind=conn)
+            except Exception:
+                pass
+        try:
+            insp.get_columns("artist_releases")
+        except Exception:
+            try:
+                ArtistRelease.__table__.create(bind=conn)
             except Exception:
                 pass
         try:

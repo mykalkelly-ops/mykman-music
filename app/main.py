@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 from .db import engine, get_session
 from .models import (
     Artist, Album, Song, SongLink, Playlist, PlaylistSong, Comparison, Note, Comment,
-    Person, ArtistMembership, SongCredit, Subscriber, AlbumTrack, ListenQueueItem, NoteSong, init_db,
+    Person, ArtistMembership, SongCredit, Subscriber, AlbumTrack, ListenQueueItem, NoteSong, ArtistRelease, init_db,
 )
 from .auth import (
     is_admin, require_admin, login as do_login, logout as do_logout,
@@ -574,8 +574,48 @@ def artist_detail(artist_id: int, request: Request, db: Session = Depends(get_se
     ar = db.get(Artist, artist_id)
     if ar is None:
         return HTMLResponse("Artist not found", status_code=404)
-    albums_sorted = sorted(ar.albums, key=lambda a: -(a.year or 0))
+    if ar.mb_id and (ar.kind in (None, "solo") or not ar.releases):
+        try:
+            from .enrich import enrich_artist as _enrich_artist
+            _enrich_artist(db, ar)
+            db.refresh(ar)
+        except Exception:
+            db.rollback()
+    albums_sorted = sorted(ar.albums, key=lambda a: (-(a.year or 0), a.title.lower()))
     artist_summary = next((row for row in artist_scores(db) if row.artist_id == artist_id), None)
+    listened_album_ids = _listened_album_ids(db)
+    local_albums_by_rg = {
+        al.release_group_mb_id: al
+        for al in ar.albums
+        if al.release_group_mb_id
+    }
+    release_rows = []
+    if ar.releases:
+        for rel in sorted(ar.releases, key=lambda r: (-(r.year or 0), r.title.lower())):
+            local_album = local_albums_by_rg.get(rel.release_group_mb_id)
+            listened = bool(local_album and local_album.id in listened_album_ids)
+            release_rows.append(
+                {
+                    "title": rel.title,
+                    "year": rel.year,
+                    "primary_type": rel.primary_type or "",
+                    "track_count": rel.track_count,
+                    "listened": listened,
+                    "href": f"/albums/{local_album.id}" if local_album else None,
+                }
+            )
+    else:
+        for al in albums_sorted:
+            release_rows.append(
+                {
+                    "title": al.title,
+                    "year": al.year,
+                    "primary_type": classify_release_type(al),
+                    "track_count": effective_album_total_tracks(al),
+                    "listened": al.id in listened_album_ids,
+                    "href": f"/albums/{al.id}",
+                }
+            )
 
     # Memberships
     memberships = db.query(ArtistMembership).filter(ArtistMembership.artist_id == artist_id).all()
@@ -621,6 +661,7 @@ def artist_detail(artist_id: int, request: Request, db: Session = Depends(get_se
             "artist": ar,
             "artist_summary": artist_summary,
             "albums": albums_sorted,
+            "release_rows": release_rows,
             "notes": _notes_for(db, request, "artist", artist_id),
             "members": member_rows,
             "related_acts": related,

@@ -10,7 +10,7 @@
   {% endif %}
   <div>
     <div style="color:#888; font-size:0.85rem;">ARTIST</div>
-    <h1 style="margin:0.25rem 0 0.5rem 0;">{{ artist.name }}</h1>
+    <h1 style="margin:0.25rem 0 0.5rem 0; {% if artist_summary and artist_summary.discography_percent == 100 %}color:#2d7a3f;{% endif %}">{{ artist.name }}</h1>
     <div style="color:#bbb;">
       Kind: {{ artist.kind or "unset" }}
       {% if artist.country %} · {{ artist.country }}{% endif %}
@@ -38,16 +38,16 @@
   </div>
 </div>
 
-<h2>Albums</h2>
+<h2>Discography</h2>
 <table>
-  <thead><tr><th>Year</th><th>Title</th><th>Genre</th><th>Songs</th></tr></thead>
+  <thead><tr><th>Year</th><th>Title</th><th>Type</th><th>Tracks</th></tr></thead>
   <tbody>
-    {% for a in albums %}
-    <tr>
+    {% for a in release_rows %}
+    <tr {% if a.listened %}style="background:rgba(111, 214, 138, 0.25);"{% endif %}>
       <td>{{ a.year or "" }}</td>
-      <td><a href="/albums/{{ a.id }}">{{ a.title }}</a></td>
-      <td>{{ a.genre or "" }}</td>
-      <td>{{ a.songs|length }}</td>
+      <td>{% if a.href %}<a href="{{ a.href }}">{{ a.title }}</a>{% else %}{{ a.title }}{% endif %}</td>
+      <td>{{ a.primary_type or "" }}</td>
+      <td>{{ a.track_count if a.track_count else "?" }}</td>
     </tr>
     {% endfor %}
   </tbody>

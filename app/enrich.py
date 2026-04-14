@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from . import musicbrainz as mb
 from . import art
-from .models import Artist, Album, Person, ArtistMembership, AlbumTrack
+from .models import Artist, Album, Person, ArtistMembership, AlbumTrack, ArtistRelease
 from .scoring import effective_album_total_tracks
 
 # Module-level progress for the bulk background task.
@@ -43,7 +43,7 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
         ls = top.get("life-span") or {}
         artist.start_year = artist.start_year or _parse_year(ls.get("begin"))
         artist.end_year = artist.end_year or _parse_year(ls.get("end"))
-        if (top.get("type") or "").lower() == "group" and not artist.kind:
+        if (top.get("type") or "").lower() == "group" and artist.kind in (None, "solo"):
             artist.kind = "group"
 
     detail = mb.get_artist(mbid) or {}
@@ -57,7 +57,7 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
             artist.start_year = _parse_year(ls.get("begin"))
         if not artist.end_year:
             artist.end_year = _parse_year(ls.get("end"))
-        if (detail.get("type") or "").lower() == "group" and not artist.kind:
+        if (detail.get("type") or "").lower() == "group" and artist.kind in (None, "solo"):
             artist.kind = "group"
 
         # Members: artist-rels with type "member of band" where direction=backward
@@ -111,6 +111,30 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
                 db.add(m)
                 members_added += 1
 
+        if artist.kind == "group":
+            # Remove the fake self-person created by older backfills.
+            self_person = db.query(Person).filter(Person.name == artist.name).first()
+            if self_person is not None:
+                for membership in (
+                    db.query(ArtistMembership)
+                    .filter(ArtistMembership.artist_id == artist.id, ArtistMembership.person_id == self_person.id)
+                    .all()
+                ):
+                    db.delete(membership)
+            # Deduplicate duplicate memberships to the same person.
+            seen_people: set[int] = set()
+            memberships = (
+                db.query(ArtistMembership)
+                .filter(ArtistMembership.artist_id == artist.id, ArtistMembership.person_id.isnot(None))
+                .order_by(ArtistMembership.id.asc())
+                .all()
+            )
+            for membership in memberships:
+                if membership.person_id in seen_people:
+                    db.delete(membership)
+                else:
+                    seen_people.add(int(membership.person_id))
+
         # Wikidata image via url-rels
         if not artist.image_url:
             wd_url = None
@@ -147,11 +171,37 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
         al.release_group_mb_id: al
         for al in db.query(Album).filter(Album.artist_id == artist.id, Album.release_group_mb_id.isnot(None)).all()
     }
+    existing_release_rows = {
+        row.release_group_mb_id: row
+        for row in db.query(ArtistRelease).filter(ArtistRelease.artist_id == artist.id).all()
+    }
+    seen_release_groups: set[str] = set()
     for rg in filtered_groups:
         rgid = rg.get("id")
+        if not rgid:
+            continue
+        seen_release_groups.add(rgid)
         local_album = local_by_rg.get(rgid)
+        release_row = existing_release_rows.get(rgid)
+        primary_type = (rg.get("primary-type") or "").lower() or None
+        first_release = _parse_year(rg.get("first-release-date"))
+        if release_row is None:
+            release_row = ArtistRelease(
+                artist_id=artist.id,
+                release_group_mb_id=rgid,
+                title=rg.get("title") or "Untitled",
+                year=first_release,
+                primary_type=primary_type,
+            )
+            db.add(release_row)
+            existing_release_rows[rgid] = release_row
+        else:
+            release_row.title = rg.get("title") or release_row.title
+            release_row.year = release_row.year or first_release
+            release_row.primary_type = release_row.primary_type or primary_type
         if local_album and local_album.total_track_count:
             track_total += int(local_album.total_track_count)
+            release_row.track_count = local_album.total_track_count
             continue
         releases = mb.browse_releases_for_release_group(rgid)
         chosen = None
@@ -171,6 +221,11 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
             total_tracks += int(medium.get("track-count") or 0)
         if total_tracks:
             track_total += total_tracks
+            release_row.track_count = total_tracks
+
+    for rgid, row in existing_release_rows.items():
+        if rgid not in seen_release_groups:
+            db.delete(row)
 
     if release_total:
         artist.internet_release_total = release_total
