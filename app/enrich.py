@@ -1,4 +1,5 @@
 """Enrichment logic: MusicBrainz -> Artist/Album/Person DB rows + art caching."""
+from datetime import datetime
 from sqlalchemy.orm import Session
 
 from . import musicbrainz as mb
@@ -123,11 +124,70 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
                 if img:
                     artist.image_url = img
 
+    # Internet-backed discography totals (albums + EPs, excluding singles).
+    release_groups = []
+    for release_type in ("album", "ep"):
+        release_groups.extend(mb.browse_release_groups(mbid, primary_type=release_type))
+    seen_rg: set[str] = set()
+    filtered_groups: list[dict] = []
+    for rg in release_groups:
+        rgid = rg.get("id")
+        if not rgid or rgid in seen_rg:
+            continue
+        seen_rg.add(rgid)
+        secondary_types = {(t or "").lower() for t in (rg.get("secondary-types") or [])}
+        if "compilation" in secondary_types or "live" in secondary_types:
+            continue
+        filtered_groups.append(rg)
+
+    release_total = len(filtered_groups)
+    track_total = 0
+    local_by_rg = {
+        al.release_group_mb_id: al
+        for al in db.query(Album).filter(Album.artist_id == artist.id, Album.release_group_mb_id.isnot(None)).all()
+    }
+    for rg in filtered_groups:
+        rgid = rg.get("id")
+        local_album = local_by_rg.get(rgid)
+        if local_album and local_album.total_track_count:
+            track_total += int(local_album.total_track_count)
+            continue
+        releases = mb.browse_releases_for_release_group(rgid)
+        chosen = None
+        for rel in releases:
+            if (rel.get("status") or "").lower() in ("official", ""):
+                chosen = rel
+                break
+        if chosen is None and releases:
+            chosen = releases[0]
+        if chosen is None:
+            continue
+        detail = mb.get_release(chosen.get("id"))
+        if not detail:
+            continue
+        total_tracks = 0
+        for medium in detail.get("media", []) or []:
+            total_tracks += int(medium.get("track-count") or 0)
+        if total_tracks:
+            track_total += total_tracks
+
+    if release_total:
+        artist.internet_release_total = release_total
+    if track_total:
+        artist.internet_track_total = track_total
+    artist.internet_synced_at = datetime.utcnow()
+
     db.commit()
     # Download image
     if artist.image_url and not artist.image_path:
         art.cache_artist_image(artist, db)
-    return {"ok": True, "mb_id": artist.mb_id, "image": artist.image_path}
+    return {
+        "ok": True,
+        "mb_id": artist.mb_id,
+        "image": artist.image_path,
+        "internet_release_total": artist.internet_release_total,
+        "internet_track_total": artist.internet_track_total,
+    }
 
 
 def enrich_album(db: Session, album: Album) -> dict:
@@ -210,7 +270,9 @@ def bulk_enrich(SessionFactory):
     progress["error"] = None
     db = SessionFactory()
     try:
-        artists = db.query(Artist).filter(Artist.mb_id.is_(None)).all()
+        artists = db.query(Artist).filter(
+            (Artist.mb_id.is_(None)) | (Artist.internet_release_total.is_(None)) | (Artist.internet_track_total.is_(None))
+        ).all()
         albums = db.query(Album).filter(Album.mb_id.is_(None), Album.release_group_mb_id.is_(None)).all()
         progress["total"] = len(artists) + len(albums)
         for a in artists:

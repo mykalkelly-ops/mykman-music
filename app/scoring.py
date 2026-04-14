@@ -89,12 +89,13 @@ class ArtistScore:
     artist_id: int
     name: str
     score: float
-    album_count: int
-    total_songs: int
+    listened_albums: int
+    total_albums: int | None
+    total_songs: int | None
     liked_songs: int
     listened_tracks: int
-    known_tracks: int
-    discography_percent: int
+    known_tracks: int | None
+    discography_percent: int | None
 
 
 def _song_effective_rating(song: Song, is_liked: bool) -> float:
@@ -207,16 +208,15 @@ def artist_scores(db: Session) -> list[ArtistScore]:
         score_acc = 0.0
         total_songs = 0
         liked_songs = 0
-        album_count = 0
+        listened_albums = 0
         listened_tracks = 0
-        known_tracks = 0
+        local_known_tracks = 0
         seen_canonical: set[tuple[str, str, int] | tuple[str, int]] = set()
         for album in artist.albums:
             if not album.songs:
                 continue
             if classify_release_type(album) == "single":
                 continue
-            album_count += 1
             album_total = 0.0
             album_weight = 0.0
             album_song_count = 0
@@ -240,8 +240,9 @@ def artist_scores(db: Session) -> list[ArtistScore]:
             if album_weight == 0:
                 continue
             album_total_tracks = album.total_track_count or album_song_count
-            known_tracks += album_total_tracks
+            local_known_tracks += album_total_tracks
             if album.confirmed_listened or album_liked:
+                listened_albums += 1
                 listened_tracks += album_total_tracks
             album_score = album_total / album_weight
             album_w = len(album.songs)
@@ -250,17 +251,20 @@ def artist_scores(db: Session) -> list[ArtistScore]:
         if total_weight == 0:
             continue
         score = score_acc / total_weight
+        internet_total_albums = artist.internet_release_total
+        internet_total_tracks = artist.internet_track_total
         results.append(
             ArtistScore(
                 artist_id=artist.id,
                 name=artist.name,
                 score=score,
-                album_count=album_count,
-                total_songs=total_songs,
+                listened_albums=listened_albums,
+                total_albums=internet_total_albums,
+                total_songs=internet_total_tracks,
                 liked_songs=liked_songs,
                 listened_tracks=listened_tracks,
-                known_tracks=known_tracks,
-                discography_percent=int(round((listened_tracks / known_tracks) * 100)) if known_tracks else 0,
+                known_tracks=internet_total_tracks,
+                discography_percent=int(round((listened_tracks / internet_total_tracks) * 100)) if internet_total_tracks else None,
             )
         )
     results.sort(key=lambda row: row.score, reverse=True)

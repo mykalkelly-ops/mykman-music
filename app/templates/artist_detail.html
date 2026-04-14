@@ -20,10 +20,14 @@
     {% if artist_summary %}
     <div style="margin-top:0.7rem; max-width:340px;">
       <div style="font-size:0.8rem; color:#7a5a88; margin-bottom:0.25rem;">Discography progress</div>
-      <div style="height:0.8rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
-        <div style="height:100%; width:{{ artist_summary.discography_percent }}%; background:linear-gradient(90deg, #ff7db8, #ffd34d);"></div>
-      </div>
-      <div style="font-size:0.82rem; color:#7a5a88; margin-top:0.25rem;">{{ artist_summary.discography_percent }}% complete · {{ artist_summary.listened_tracks }} / {{ artist_summary.known_tracks }} tracks</div>
+      {% if artist_summary.discography_percent is not none and artist_summary.known_tracks %}
+        <div style="height:0.8rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
+          <div style="height:100%; width:{{ artist_summary.discography_percent }}%; background:linear-gradient(90deg, #ff7db8, #ffd34d);"></div>
+        </div>
+        <div style="font-size:0.82rem; color:#7a5a88; margin-top:0.25rem;">{{ artist_summary.discography_percent }}% complete · {{ artist_summary.listened_tracks }} / {{ artist_summary.known_tracks }} tracks</div>
+      {% else %}
+        <div style="font-size:0.82rem; color:#7a5a88;">Needs internet totals</div>
+      {% endif %}
     </div>
     {% endif %}
     {% if is_admin %}

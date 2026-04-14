@@ -71,6 +71,56 @@ def get_artist(mbid: str) -> dict | None:
     return _get_json(url)
 
 
+def browse_release_groups(artist_mbid: str, primary_type: str | None = None) -> list[dict]:
+    out: list[dict] = []
+    offset = 0
+    while True:
+        params = {
+            "artist": artist_mbid,
+            "fmt": "json",
+            "limit": 100,
+            "offset": offset,
+        }
+        if primary_type:
+            params["type"] = primary_type
+        url = f"{MB_BASE}/release-group?{urllib.parse.urlencode(params)}"
+        data = _get_json(url)
+        if not data:
+            break
+        groups = data.get("release-groups") or []
+        if not groups:
+            break
+        out.extend(groups)
+        if len(groups) < 100:
+            break
+        offset += 100
+    return out
+
+
+def browse_releases_for_release_group(release_group_mbid: str) -> list[dict]:
+    out: list[dict] = []
+    offset = 0
+    while True:
+        params = {
+            "release-group": release_group_mbid,
+            "fmt": "json",
+            "limit": 100,
+            "offset": offset,
+        }
+        url = f"{MB_BASE}/release?{urllib.parse.urlencode(params)}"
+        data = _get_json(url)
+        if not data:
+            break
+        releases = data.get("releases") or []
+        if not releases:
+            break
+        out.extend(releases)
+        if len(releases) < 100:
+            break
+        offset += 100
+    return out
+
+
 def search_release_group(artist_name: str, album_name: str) -> dict | None:
     preferred_types = _preferred_release_types(album_name)
     for title in _album_title_variants(album_name):

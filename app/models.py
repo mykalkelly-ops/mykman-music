@@ -26,6 +26,9 @@ class Artist(Base):
     disambiguation = Column(String, nullable=True)
     start_year = Column(Integer, nullable=True)
     end_year = Column(Integer, nullable=True)
+    internet_release_total = Column(Integer, nullable=True)
+    internet_track_total = Column(Integer, nullable=True)
+    internet_synced_at = Column(DateTime, nullable=True)
     albums = relationship("Album", back_populates="artist", cascade="all, delete-orphan")
 
 
@@ -251,6 +254,9 @@ def init_db(engine):
                 ("disambiguation", "ALTER TABLE artists ADD COLUMN disambiguation VARCHAR"),
                 ("start_year", "ALTER TABLE artists ADD COLUMN start_year INTEGER"),
                 ("end_year", "ALTER TABLE artists ADD COLUMN end_year INTEGER"),
+                ("internet_release_total", "ALTER TABLE artists ADD COLUMN internet_release_total INTEGER"),
+                ("internet_track_total", "ALTER TABLE artists ADD COLUMN internet_track_total INTEGER"),
+                ("internet_synced_at", "ALTER TABLE artists ADD COLUMN internet_synced_at DATETIME"),
             ]:
                 if col not in artist_cols:
                     try:
