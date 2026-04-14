@@ -70,6 +70,8 @@ def effective_album_total_tracks(album: Album) -> int | None:
         return int(album.total_track_count)
     if getattr(album, "tracks", None):
         return len(album.tracks)
+    if getattr(album, "songs", None):
+        return len(album.songs)
     return None
 
 
