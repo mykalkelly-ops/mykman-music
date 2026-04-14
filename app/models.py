@@ -26,6 +26,7 @@ class Artist(Base):
     disambiguation = Column(String, nullable=True)
     start_year = Column(Integer, nullable=True)
     end_year = Column(Integer, nullable=True)
+    prompt_resolved = Column(Boolean, nullable=True, default=False)
     internet_release_total = Column(Integer, nullable=True)
     internet_track_total = Column(Integer, nullable=True)
     internet_synced_at = Column(DateTime, nullable=True)
@@ -268,6 +269,7 @@ def init_db(engine):
                 ("disambiguation", "ALTER TABLE artists ADD COLUMN disambiguation VARCHAR"),
                 ("start_year", "ALTER TABLE artists ADD COLUMN start_year INTEGER"),
                 ("end_year", "ALTER TABLE artists ADD COLUMN end_year INTEGER"),
+                ("prompt_resolved", "ALTER TABLE artists ADD COLUMN prompt_resolved BOOLEAN DEFAULT 0"),
                 ("internet_release_total", "ALTER TABLE artists ADD COLUMN internet_release_total INTEGER"),
                 ("internet_track_total", "ALTER TABLE artists ADD COLUMN internet_track_total INTEGER"),
                 ("internet_synced_at", "ALTER TABLE artists ADD COLUMN internet_synced_at DATETIME"),
@@ -277,6 +279,18 @@ def init_db(engine):
                         conn.execute(text(ddl))
                     except Exception:
                         pass
+            try:
+                conn.execute(text("""
+                    UPDATE artists
+                    SET prompt_resolved = 1
+                    WHERE (prompt_resolved IS NULL OR prompt_resolved = 0)
+                      AND (
+                        kind IN ('group', 'collab')
+                        OR (kind = 'solo' AND gender IN ('M', 'F', 'NB', 'Unknown'))
+                      )
+                """))
+            except Exception:
+                pass
         except Exception:
             pass
         # Album enrichment columns

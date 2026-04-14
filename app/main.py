@@ -860,6 +860,7 @@ def next_artist_prompt(exclude: str | None = None, db: Session = Depends(get_ses
         .join(Album, Album.artist_id == Artist.id)
         .join(Song, Song.album_id == Album.id)
         .join(PlaylistSong, PlaylistSong.song_id == Song.id)
+        .filter((Artist.prompt_resolved.is_(None)) | (Artist.prompt_resolved != True))  # noqa: E712
         .distinct()
         .all()
     )
@@ -911,6 +912,7 @@ def set_artist_meta(body: ArtistMetaBody, request: Request, db: Session = Depend
         raise HTTPException(400, "invalid gender value")
     artist.gender = body.gender
     artist.is_band = body.gender == "Band"
+    artist.prompt_resolved = True
     db.commit()
     return {"ok": True}
 
@@ -1950,6 +1952,7 @@ def set_artist_kind(artist_id: int, body: KindBody, request: Request, db: Sessio
     if artist is None:
         raise HTTPException(404, "artist not found")
     artist.kind = body.kind
+    artist.prompt_resolved = True
     db.commit()
     return {"ok": True}
 
@@ -2003,6 +2006,7 @@ def add_member(artist_id: int, body: MemberBody, request: Request, db: Session =
         role=body.role,
     )
     db.add(m)
+    artist.prompt_resolved = True
     db.commit()
     return {"ok": True, "id": m.id}
 
@@ -2093,6 +2097,7 @@ def quick_classify(artist_id: int, body: QuickClassifyBody, request: Request, db
             if existing is None:
                 db.add(ArtistMembership(artist_id=artist.id, child_artist_id=cid, role="member"))
 
+    artist.prompt_resolved = True
     db.commit()
     return {"ok": True}
 
