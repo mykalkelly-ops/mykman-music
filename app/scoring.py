@@ -10,6 +10,7 @@ Philosophy:
 - MYK tiers use fixed Glicko rating cutoffs. Songs with high RD are "unrated"
   until the system has enough data to be confident.
 """
+import heapq
 from dataclasses import dataclass
 from markupsafe import Markup
 from sqlalchemy.orm import Session
@@ -217,100 +218,121 @@ def gender_breakdown(db: Session) -> list[tuple[str, int, float]]:
     return out
 
 
+def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: dict[int, int]) -> ArtistScore | None:
+    if is_various_artists_name(artist.name):
+        return None
+    total_weight = 0.0
+    score_acc = 0.0
+    credited_song_ids = {
+        sid
+        for (sid,) in db.query(SongCredit.song_id)
+        .filter(SongCredit.artist_id == artist.id, SongCredit.role.in_(("primary", "featured")))
+        .distinct()
+        .all()
+    }
+    liked_songs = 0
+    listened_albums = 0
+    listened_tracks = 0
+    seen_canonical: set[tuple[str, str, int] | tuple[str, int]] = set()
+    for album in artist.albums:
+        if not album.songs:
+            continue
+        if classify_release_type(album) == "single":
+            continue
+        album_total = 0.0
+        album_weight = 0.0
+        album_song_count = 0
+        album_liked = False
+        for song in album.songs:
+            gid = groups.get(song.id)
+            key = ("linked", gid) if gid is not None else canonical_key(song)
+            if key in seen_canonical:
+                continue
+            seen_canonical.add(key)
+            album_song_count += 1
+            is_liked = song.id in liked_ids
+            if is_liked and song.id in credited_song_ids:
+                liked_songs += 1
+                album_liked = True
+            eff = _song_effective_rating(song, is_liked)
+            weight = max(0.1, 1.0 - (song.glicko_rd / 350.0))
+            album_total += eff * weight
+            album_weight += weight
+        if album_weight == 0:
+            continue
+        album_total_tracks = effective_album_total_tracks(album) or album_song_count
+        if album.confirmed_listened or album_liked:
+            listened_albums += 1
+            listened_tracks += album_total_tracks
+        album_score = album_total / album_weight
+        album_w = len(album.songs)
+        score_acc += album_score * album_w
+        total_weight += album_w
+
+    score = (score_acc / total_weight) if total_weight else 0.0
+
+    featured_query = (
+        db.query(Song)
+        .join(SongCredit, SongCredit.song_id == Song.id)
+        .filter(
+            SongCredit.artist_id == artist.id,
+            SongCredit.role == "featured",
+            Song.id.in_(liked_ids),
+        )
+    )
+    own_album_ids = [al.id for al in artist.albums]
+    if own_album_ids:
+        featured_query = featured_query.filter(~Song.album_id.in_(own_album_ids))
+    featured_bonus_songs = featured_query.all()
+    if featured_bonus_songs:
+        bonus_avg = sum(song.glicko_rating for song in featured_bonus_songs) / len(featured_bonus_songs)
+        score = (score * 0.9) + (bonus_avg * 0.1) if total_weight else bonus_avg
+
+    internet_total_albums = artist.internet_release_total
+    internet_total_tracks = artist.internet_track_total
+    return ArtistScore(
+        artist_id=artist.id,
+        name=artist.name,
+        score=score,
+        listened_albums=listened_albums,
+        total_albums=internet_total_albums,
+        total_songs=internet_total_tracks,
+        liked_songs=liked_songs,
+        listened_tracks=listened_tracks,
+        known_tracks=internet_total_tracks,
+        discography_percent=int(round((listened_tracks / internet_total_tracks) * 100)) if internet_total_tracks else None,
+    )
+
+
 def artist_scores(db: Session) -> list[ArtistScore]:
     liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
     groups = linked_song_groups(db)
     results: list[ArtistScore] = []
-    artists = db.query(Artist).all()
-    for artist in artists:
-        if is_various_artists_name(artist.name):
-            continue
-        total_weight = 0.0
-        score_acc = 0.0
-        credited_song_ids = {
-            sid
-            for (sid,) in db.query(SongCredit.song_id)
-            .filter(SongCredit.artist_id == artist.id, SongCredit.role.in_(("primary", "featured")))
-            .distinct()
-            .all()
-        }
-        total_songs = len(credited_song_ids)
-        liked_songs = 0
-        listened_albums = 0
-        listened_tracks = 0
-        local_known_tracks = 0
-        seen_canonical: set[tuple[str, str, int] | tuple[str, int]] = set()
-        for album in artist.albums:
-            if not album.songs:
-                continue
-            if classify_release_type(album) == "single":
-                continue
-            album_total = 0.0
-            album_weight = 0.0
-            album_song_count = 0
-            album_liked = False
-            for song in album.songs:
-                gid = groups.get(song.id)
-                key = ("linked", gid) if gid is not None else canonical_key(song)
-                if key in seen_canonical:
-                    continue
-                seen_canonical.add(key)
-                album_song_count += 1
-                is_liked = song.id in liked_ids
-                if is_liked and song.id in credited_song_ids:
-                    liked_songs += 1
-                    album_liked = True
-                eff = _song_effective_rating(song, is_liked)
-                weight = max(0.1, 1.0 - (song.glicko_rd / 350.0))
-                album_total += eff * weight
-                album_weight += weight
-            if album_weight == 0:
-                continue
-            album_total_tracks = effective_album_total_tracks(album) or album_song_count
-            local_known_tracks += album_total_tracks
-            if album.confirmed_listened or album_liked:
-                listened_albums += 1
-                listened_tracks += album_total_tracks
-            album_score = album_total / album_weight
-            album_w = len(album.songs)
-            score_acc += album_score * album_w
-            total_weight += album_w
-        if total_weight == 0:
-            score = 0.0
-        else:
-            score = score_acc / total_weight
-
-        featured_query = (
-            db.query(Song)
-            .join(SongCredit, SongCredit.song_id == Song.id)
-            .filter(
-                SongCredit.artist_id == artist.id,
-                SongCredit.role == "featured",
-                Song.id.in_(liked_ids),
-            )
-        )
-        own_album_ids = [al.id for al in artist.albums]
-        if own_album_ids:
-            featured_query = featured_query.filter(~Song.album_id.in_(own_album_ids))
-        featured_bonus_songs = featured_query.all()
-        if featured_bonus_songs:
-            bonus_avg = sum(song.glicko_rating for song in featured_bonus_songs) / len(featured_bonus_songs)
-            score = (score * 0.9) + (bonus_avg * 0.1) if total_weight else bonus_avg
-        internet_total_albums = artist.internet_release_total
-        internet_total_tracks = artist.internet_track_total
-        results.append(
-            ArtistScore(
-                artist_id=artist.id,
-                name=artist.name,
-                score=score,
-                listened_albums=listened_albums,
-                total_albums=internet_total_albums,
-                total_songs=internet_total_tracks,
-                liked_songs=liked_songs,
-                listened_tracks=listened_tracks,
-                known_tracks=internet_total_tracks,
-                discography_percent=int(round((listened_tracks / internet_total_tracks) * 100)) if internet_total_tracks else None,
-            )
-        )
+    for artist in db.query(Artist).all():
+        row = _artist_score_row(db, artist, liked_ids, groups)
+        if row is not None:
+            results.append(row)
     results.sort(key=lambda row: row.score, reverse=True)
     return results
+
+
+def artist_score_for(db: Session, artist: Artist) -> ArtistScore | None:
+    liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
+    groups = linked_song_groups(db)
+    return _artist_score_row(db, artist, liked_ids, groups)
+
+
+def top_artist_scores(db: Session, limit: int = 10) -> list[ArtistScore]:
+    liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
+    groups = linked_song_groups(db)
+    heap: list[tuple[float, int, ArtistScore]] = []
+    for artist in db.query(Artist).yield_per(100):
+        row = _artist_score_row(db, artist, liked_ids, groups)
+        if row is None:
+            continue
+        item = (row.score, row.artist_id, row)
+        if len(heap) < limit:
+            heapq.heappush(heap, item)
+        elif item[:2] > heap[0][:2]:
+            heapq.heapreplace(heap, item)
+    return [item[2] for item in sorted(heap, key=lambda x: (x[0], x[1]), reverse=True)]

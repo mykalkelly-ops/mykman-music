@@ -29,14 +29,13 @@ from .auth import (
 from .glicko import update_pair
 from .pair_selector import pick_pair, note_recent_pair
 from .placement import update_bounds, maybe_finalize
-from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks, _expand_artist_genders, is_various_artists_name
+from .scoring import album_scores, artist_scores, artist_score_for, top_artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks, _expand_artist_genders, is_various_artists_name
 from .notes import render_markdown, resolve_target, search_notes, search_targets, related_songs_for_note
 from .canonical import canonical_key, unique_liked_song_count, progress_metrics, linked_song_groups
 from .genres import normalize_genre
 from .reviews import (
     loved_songs_needing_review,
     loved_albums_needing_review,
-    loved_artists_needing_review,
     any_review_candidate,
 )
 from .history import append_event
@@ -300,9 +299,11 @@ def index(request: Request, db: Session = Depends(get_session)):
         .all()
     )
 
-    review_songs = loved_songs_needing_review(db)
-    review_albums = loved_albums_needing_review(db)
-    review_artists = loved_artists_needing_review(db)
+    review_songs = loved_songs_needing_review(db) if is_admin(request) else []
+    review_albums = loved_albums_needing_review(db) if is_admin(request) else []
+    # Artist-wide review prompts currently require a full-library scoring pass.
+    # Keep them off the homepage so a normal page load stays lightweight on Render.
+    review_artists = []
     progress = progress_metrics(db)
     recent_query = db.query(Note)
     if not is_admin(request):
@@ -589,15 +590,8 @@ def artist_detail(artist_id: int, request: Request, db: Session = Depends(get_se
     ar = db.get(Artist, artist_id)
     if ar is None:
         return HTMLResponse("Artist not found", status_code=404)
-    if ar.mb_id and (ar.kind in (None, "solo") or not ar.releases):
-        try:
-            from .enrich import enrich_artist as _enrich_artist
-            _enrich_artist(db, ar)
-            db.refresh(ar)
-        except Exception:
-            db.rollback()
     albums_sorted = sorted(ar.albums, key=lambda a: (-(a.year or 0), a.title.lower()))
-    artist_summary = next((row for row in artist_scores(db) if row.artist_id == artist_id), None)
+    artist_summary = artist_score_for(db, ar)
     listened_album_ids = _listened_album_ids(db)
     local_albums_by_rg = {
         al.release_group_mb_id: al
@@ -1506,7 +1500,7 @@ def stats_page(request: Request, db: Session = Depends(get_session)):
     playlist_rows.sort(key=lambda r: -r["avg"])
     max_playlist_avg = max((row["avg"] for row in playlist_rows), default=1.0)
 
-    top_artists = artist_scores(db)[:10]
+    top_artists = top_artist_scores(db, limit=10)
     max_artist_score = max((row.score for row in top_artists), default=1.0)
 
     return templates.TemplateResponse(
