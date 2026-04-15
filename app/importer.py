@@ -59,7 +59,7 @@ def album_key(track: dict) -> tuple[str, str]:
 
 def get_or_create_artist(db: Session, name: str) -> Artist:
     name = (name or "Unknown Artist").strip()
-    artist = db.query(Artist).filter(Artist.name.ilike(name)).one_or_none()
+    artist = db.query(Artist).filter(Artist.name.ilike(name)).order_by(Artist.id.asc()).first()
     if artist is None:
         artist = Artist(name=name)
         db.add(artist)
@@ -69,7 +69,7 @@ def get_or_create_artist(db: Session, name: str) -> Artist:
 
 def get_or_create_album(db: Session, artist: Artist, title: str, year: int | None, genre: str | None) -> Album:
     title = (title or "Unknown Album").strip()
-    album = db.query(Album).filter(Album.artist_id == artist.id, Album.title.ilike(title)).one_or_none()
+    album = db.query(Album).filter(Album.artist_id == artist.id, Album.title.ilike(title)).order_by(Album.id.asc()).first()
     if album is None:
         album = Album(artist_id=artist.id, title=title, year=year, genre=genre)
         db.add(album)
@@ -153,11 +153,14 @@ def import_library(xml_path: Path) -> dict:
                 artist_cache[cache_key] = artist.id
 
             album = get_or_create_album(db, artist, album_title, year, genre)
-            song = (
-                db.query(Song)
-                .filter(Song.album_id == album.id, Song.title.ilike(name))
-                .one_or_none()
-            )
+            song = db.query(Song).filter(Song.apple_track_id == str(track_id)).order_by(Song.id.asc()).first()
+            if song is None:
+                song = (
+                    db.query(Song)
+                    .filter(Song.album_id == album.id, Song.title.ilike(name))
+                    .order_by(Song.id.asc())
+                    .first()
+                )
             if song is None:
                 song = Song(
                     album_id=album.id,
