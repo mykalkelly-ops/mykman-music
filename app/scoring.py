@@ -27,6 +27,10 @@ TIER_CUTOFFS = [
     (0, 1),
 ]
 
+VARIOUS_ARTISTS_NAMES = {
+    "various artists",
+}
+
 
 def myk_tier(rating: float, rd: float) -> int | None:
     if rd > TIER_RD_THRESHOLD:
@@ -49,6 +53,10 @@ def render_myks(count: int | None) -> str:
         for _ in range(max(0, int(count)))
     )
     return Markup(f'<span class="myk-strip" aria-label="{count} MYKs">{badges}</span>')
+
+
+def is_various_artists_name(name: str | None) -> bool:
+    return ((name or "").strip().lower() in VARIOUS_ARTISTS_NAMES)
 
 
 @dataclass
@@ -215,9 +223,18 @@ def artist_scores(db: Session) -> list[ArtistScore]:
     results: list[ArtistScore] = []
     artists = db.query(Artist).all()
     for artist in artists:
+        if is_various_artists_name(artist.name):
+            continue
         total_weight = 0.0
         score_acc = 0.0
-        total_songs = 0
+        credited_song_ids = {
+            sid
+            for (sid,) in db.query(SongCredit.song_id)
+            .filter(SongCredit.artist_id == artist.id, SongCredit.role.in_(("primary", "featured")))
+            .distinct()
+            .all()
+        }
+        total_songs = len(credited_song_ids)
         liked_songs = 0
         listened_albums = 0
         listened_tracks = 0
@@ -238,10 +255,9 @@ def artist_scores(db: Session) -> list[ArtistScore]:
                 if key in seen_canonical:
                     continue
                 seen_canonical.add(key)
-                total_songs += 1
                 album_song_count += 1
                 is_liked = song.id in liked_ids
-                if is_liked:
+                if is_liked and song.id in credited_song_ids:
                     liked_songs += 1
                     album_liked = True
                 eff = _song_effective_rating(song, is_liked)
@@ -260,8 +276,26 @@ def artist_scores(db: Session) -> list[ArtistScore]:
             score_acc += album_score * album_w
             total_weight += album_w
         if total_weight == 0:
-            continue
-        score = score_acc / total_weight
+            score = 0.0
+        else:
+            score = score_acc / total_weight
+
+        featured_query = (
+            db.query(Song)
+            .join(SongCredit, SongCredit.song_id == Song.id)
+            .filter(
+                SongCredit.artist_id == artist.id,
+                SongCredit.role == "featured",
+                Song.id.in_(liked_ids),
+            )
+        )
+        own_album_ids = [al.id for al in artist.albums]
+        if own_album_ids:
+            featured_query = featured_query.filter(~Song.album_id.in_(own_album_ids))
+        featured_bonus_songs = featured_query.all()
+        if featured_bonus_songs:
+            bonus_avg = sum(song.glicko_rating for song in featured_bonus_songs) / len(featured_bonus_songs)
+            score = (score * 0.9) + (bonus_avg * 0.1) if total_weight else bonus_avg
         internet_total_albums = artist.internet_release_total
         internet_total_tracks = artist.internet_track_total
         results.append(

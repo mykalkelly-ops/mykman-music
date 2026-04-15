@@ -119,6 +119,13 @@
   </div>
 </div>
 
+<h2>Merge artist</h2>
+<div style="background:rgba(255,255,255,0.92); border:2px solid var(--void); padding:1rem; border-radius:18px; margin-top:1rem;">
+  <div style="font-size:0.85rem; color:#7a5a88; margin-bottom:0.45rem;">Search another artist entry and merge it into this one. This is for duplicates like alternate spellings or bad collab rows.</div>
+  <input id="merge-q" placeholder="search artists to merge into {{ artist.name }}" autocomplete="off" />
+  <div id="merge-results" style="font-size:0.85rem; margin-top:0.5rem;"></div>
+</div>
+
 <script>
 const ARTIST_ID = {{ artist.id }};
 
@@ -194,6 +201,37 @@ async function searchChildren() {
   }
 }
 document.getElementById('child-q').oninput = searchChildren;
+
+document.getElementById('merge-q').oninput = async () => {
+  const q = document.getElementById('merge-q').value;
+  const div = document.getElementById('merge-results');
+  div.innerHTML = '';
+  if (q.length < 1) return;
+  const r = await fetch('/api/artist-search?q=' + encodeURIComponent(q));
+  const data = await r.json();
+  for (const a of data.results) {
+    if (a.id === ARTIST_ID) continue;
+    const row = document.createElement('div');
+    row.style.marginTop = '0.3rem';
+    const b = document.createElement('button');
+    b.textContent = `Merge "${a.name}" into "{{ artist.name }}"`;
+    b.onclick = async () => {
+      if (!confirm(`Merge "${a.name}" into "{{ artist.name }}"? This will move albums, credits, notes, and memberships.`)) return;
+      const resp = await fetch(`/api/artists/${ARTIST_ID}/merge`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({source_artist_id: a.id}),
+      });
+      if (!resp.ok) {
+        alert('Could not merge artists.');
+        return;
+      }
+      location.reload();
+    };
+    row.appendChild(b);
+    div.appendChild(row);
+  }
+};
 
 document.getElementById('artist-listen-next')?.addEventListener('click', async () => {
   const status = document.getElementById('enrich-status');

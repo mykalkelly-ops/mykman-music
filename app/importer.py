@@ -12,10 +12,11 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from .db import engine, SessionLocal
-from .models import Artist, Album, Song, Playlist, PlaylistSong, init_db
+from .models import Artist, Album, Song, Playlist, PlaylistSong, SongCredit, init_db
 from .dedupe import merge_case_duplicates
 from .history import backup_before_import
 from .genres import normalize_genre
+from .scoring import is_various_artists_name
 
 MONTH_MAP = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
@@ -26,6 +27,7 @@ PLAYLIST_NAME_RE = re.compile(
     r"^(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})$",
     re.IGNORECASE,
 )
+FEAT_RE = re.compile(r"\((?:feat\.?|featuring|ft\.?)\s+([^)]+)\)", re.IGNORECASE)
 
 
 def parse_playlist_name(name: str):
@@ -35,6 +37,18 @@ def parse_playlist_name(name: str):
     if not match:
         return (None, None)
     return (MONTH_MAP[match.group(1).lower()], int(match.group(2)))
+
+
+def parse_featured_artists(title: str | None) -> list[str]:
+    text = title or ""
+    names: list[str] = []
+    for chunk in FEAT_RE.findall(text):
+        parts = re.split(r"\s*(?:,|&| and )\s*", chunk, flags=re.IGNORECASE)
+        for part in parts:
+            value = (part or "").strip()
+            if value and value not in names:
+                names.append(value)
+    return names
 
 
 def album_key(track: dict) -> tuple[str, str]:
@@ -66,6 +80,16 @@ def get_or_create_album(db: Session, artist: Artist, title: str, year: int | Non
         if not album.genre and genre:
             album.genre = genre
     return album
+
+
+def ensure_song_credit(db: Session, song: Song, artist: Artist, role: str = "primary") -> None:
+    existing = (
+        db.query(SongCredit)
+        .filter(SongCredit.song_id == song.id, SongCredit.artist_id == artist.id, SongCredit.role == role)
+        .one_or_none()
+    )
+    if existing is None:
+        db.add(SongCredit(song_id=song.id, artist_id=artist.id, role=role))
 
 
 def import_library(xml_path: Path) -> dict:
@@ -153,6 +177,16 @@ def import_library(xml_path: Path) -> dict:
                     song.track_number = track.get("Track Number")
                 if str(track_id) in wanted_track_ids:
                     song.liked = True
+
+            primary_artist_name = track.get("Artist") or artist_name
+            if is_various_artists_name(artist.name) and primary_artist_name:
+                primary_artist = get_or_create_artist(db, primary_artist_name)
+                ensure_song_credit(db, song, primary_artist, "primary")
+            else:
+                ensure_song_credit(db, song, artist, "primary")
+            for featured_name in parse_featured_artists(name):
+                feat_artist = get_or_create_artist(db, featured_name)
+                ensure_song_credit(db, song, feat_artist, "featured")
 
             track_id_to_song_pk[str(track_id)] = song.id
 

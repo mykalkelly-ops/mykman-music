@@ -29,7 +29,7 @@ from .auth import (
 from .glicko import update_pair
 from .pair_selector import pick_pair, note_recent_pair
 from .placement import update_bounds, maybe_finalize
-from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks, _expand_artist_genders
+from .scoring import album_scores, artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks, _expand_artist_genders, is_various_artists_name
 from .notes import render_markdown, resolve_target, search_notes, search_targets, related_songs_for_note
 from .canonical import canonical_key, unique_liked_song_count, progress_metrics, linked_song_groups
 from .genres import normalize_genre
@@ -442,6 +442,21 @@ def artists_page(request: Request, db: Session = Depends(get_session)):
     return templates.TemplateResponse(
         request, "artists.html", {"artists": artist_scores(db), "reviewed_ids": reviewed, "images": images}
     )
+
+
+@app.get("/api/artist-search")
+def api_artist_search(q: str, db: Session = Depends(get_session)):
+    if not q or len(q) < 1:
+        return {"results": []}
+    like = f"%{q}%"
+    rows = (
+        db.query(Artist)
+        .filter(Artist.name.ilike(like))
+        .order_by(Artist.name.asc())
+        .limit(20)
+        .all()
+    )
+    return {"results": [{"id": a.id, "name": a.name} for a in rows]}
 
 
 @app.get("/api/song-search")
@@ -860,6 +875,7 @@ def next_artist_prompt(exclude: str | None = None, db: Session = Depends(get_ses
         .join(Album, Album.artist_id == Artist.id)
         .join(Song, Song.album_id == Album.id)
         .join(PlaylistSong, PlaylistSong.song_id == Song.id)
+        .filter(func.lower(Artist.name) != "various artists")
         .filter((Artist.prompt_resolved.is_(None)) | (Artist.prompt_resolved != True))  # noqa: E712
         .distinct()
         .all()
@@ -2034,6 +2050,10 @@ class MemberBody(BaseModel):
     role: str = "member"
 
 
+class MergeArtistBody(BaseModel):
+    source_artist_id: int
+
+
 @app.post("/api/artists/{artist_id}/members")
 def add_member(artist_id: int, body: MemberBody, request: Request, db: Session = Depends(get_session)):
     require_admin(request)
@@ -2089,6 +2109,116 @@ def remove_member(artist_id: int, membership_id: int, request: Request, db: Sess
     db.delete(m)
     db.commit()
     return {"ok": True}
+
+
+@app.post("/api/artists/{artist_id}/merge")
+def merge_artist_into(artist_id: int, body: MergeArtistBody, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    target = db.get(Artist, artist_id)
+    source = db.get(Artist, body.source_artist_id)
+    if target is None or source is None:
+        raise HTTPException(404, "artist not found")
+    if target.id == source.id:
+        raise HTTPException(400, "cannot merge artist into itself")
+
+    for album in db.query(Album).filter(Album.artist_id == source.id).all():
+        exists = (
+            db.query(Album)
+            .filter(Album.artist_id == target.id, func.lower(Album.title) == album.title.lower())
+            .first()
+        )
+        if exists is None:
+            album.artist_id = target.id
+
+    for credit in db.query(SongCredit).filter(SongCredit.artist_id == source.id).all():
+        dup = (
+            db.query(SongCredit)
+            .filter(
+                SongCredit.song_id == credit.song_id,
+                SongCredit.artist_id == target.id,
+                SongCredit.role == credit.role,
+            )
+            .first()
+        )
+        if dup is None:
+            credit.artist_id = target.id
+        else:
+            db.delete(credit)
+
+    for membership in db.query(ArtistMembership).filter(ArtistMembership.artist_id == source.id).all():
+        dup = (
+            db.query(ArtistMembership)
+            .filter(
+                ArtistMembership.artist_id == target.id,
+                ArtistMembership.person_id == membership.person_id,
+                ArtistMembership.child_artist_id == membership.child_artist_id,
+                ArtistMembership.role == membership.role,
+            )
+            .first()
+        )
+        if dup is None:
+            membership.artist_id = target.id
+        else:
+            db.delete(membership)
+
+    for membership in db.query(ArtistMembership).filter(ArtistMembership.child_artist_id == source.id).all():
+        dup = (
+            db.query(ArtistMembership)
+            .filter(
+                ArtistMembership.artist_id == membership.artist_id,
+                ArtistMembership.child_artist_id == target.id,
+                ArtistMembership.role == membership.role,
+            )
+            .first()
+        )
+        if dup is None:
+            membership.child_artist_id = target.id
+        else:
+            db.delete(membership)
+
+    for rel in db.query(ArtistRelease).filter(ArtistRelease.artist_id == source.id).all():
+        dup = (
+            db.query(ArtistRelease)
+            .filter(ArtistRelease.artist_id == target.id, ArtistRelease.release_group_mb_id == rel.release_group_mb_id)
+            .first()
+        )
+        if dup is None:
+            rel.artist_id = target.id
+        else:
+            db.delete(rel)
+
+    if not target.mb_id and source.mb_id:
+        target.mb_id = source.mb_id
+    if not target.image_url and source.image_url:
+        target.image_url = source.image_url
+    if not target.image_path and source.image_path:
+        target.image_path = source.image_path
+    if not target.country and source.country:
+        target.country = source.country
+    if not target.disambiguation and source.disambiguation:
+        target.disambiguation = source.disambiguation
+    if not target.start_year and source.start_year:
+        target.start_year = source.start_year
+    if not target.end_year and source.end_year:
+        target.end_year = source.end_year
+    if not target.gender and source.gender:
+        target.gender = source.gender
+    if target.kind in (None, "solo") and source.kind in ("group", "collab"):
+        target.kind = source.kind
+    target.prompt_resolved = bool(target.prompt_resolved or source.prompt_resolved)
+    if (target.internet_release_total or 0) < (source.internet_release_total or 0):
+        target.internet_release_total = source.internet_release_total
+    if (target.internet_track_total or 0) < (source.internet_track_total or 0):
+        target.internet_track_total = source.internet_track_total
+
+    note_targets = db.query(Note).filter(Note.target_type == "artist", Note.target_id == source.id).all()
+    for note in note_targets:
+        note.target_id = target.id
+
+    db.flush()
+    db.delete(source)
+    db.commit()
+    return {"ok": True, "target_id": target.id}
 
 
 class QuickClassifyBody(BaseModel):
@@ -2183,6 +2313,8 @@ def api_enrich_artist(artist_id: int, request: Request, db: Session = Depends(ge
     ar = db.get(Artist, artist_id)
     if ar is None:
         raise HTTPException(404, "artist not found")
+    if is_various_artists_name(ar.name):
+        return {"ok": False, "reason": "skip_various_artists"}
     return _enrich_artist(db, ar)
 
 
