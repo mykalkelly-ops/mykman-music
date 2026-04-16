@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from . import musicbrainz as mb
 from . import art
 from .models import Artist, Album, Person, ArtistMembership, AlbumTrack, ArtistRelease
-from .scoring import effective_album_total_tracks
+from .scoring import effective_album_total_tracks, is_various_artists_name
 
 # Module-level progress for the bulk background task.
 progress = {
@@ -28,6 +28,13 @@ def _parse_year(s: str | None) -> int | None:
 
 def enrich_artist(db: Session, artist: Artist) -> dict:
     """Look up artist by name (or existing mb_id), fill metadata + members + image."""
+    if is_various_artists_name(artist.name):
+        artist.internet_release_total = artist.internet_release_total or 0
+        artist.internet_track_total = artist.internet_track_total or 0
+        artist.internet_synced_at = datetime.utcnow()
+        db.commit()
+        return {"ok": False, "reason": "skip_various_artists"}
+
     mbid = artist.mb_id
     if not mbid:
         results = mb.search_artist(artist.name)
@@ -249,6 +256,8 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
 def enrich_album(db: Session, album: Album) -> dict:
     if album.artist is None:
         return {"ok": False, "reason": "no_artist"}
+    if is_various_artists_name(album.artist.name):
+        return {"ok": False, "reason": "skip_various_artists_album"}
     if not album.release_group_mb_id:
         rg = mb.search_release_group(album.artist.name, album.title)
         if not rg:
@@ -327,10 +336,18 @@ def bulk_enrich(SessionFactory):
     progress["error"] = None
     db = SessionFactory()
     try:
-        artists = db.query(Artist).filter(
+        artists = [
+            artist
+            for artist in db.query(Artist).filter(
             (Artist.mb_id.is_(None)) | (Artist.internet_release_total.is_(None)) | (Artist.internet_track_total.is_(None))
-        ).all()
-        albums = db.query(Album).filter(Album.mb_id.is_(None), Album.release_group_mb_id.is_(None)).all()
+            ).all()
+            if not is_various_artists_name(artist.name)
+        ]
+        albums = [
+            album
+            for album in db.query(Album).filter(Album.mb_id.is_(None), Album.release_group_mb_id.is_(None)).all()
+            if album.artist is None or not is_various_artists_name(album.artist.name)
+        ]
         progress["total"] = len(artists) + len(albums)
         for a in artists:
             progress["current"] = f"Artist: {a.name}"
