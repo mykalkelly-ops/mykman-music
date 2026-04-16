@@ -23,6 +23,7 @@ from .placement import pick_placement_song, pick_opponent
 CANDIDATE_POOL = 60  # sample this many random songs, then score pairs
 RECENT_SONG_HISTORY = 8
 RECENT_PAIR_HISTORY = 40
+PLACEMENT_COOLDOWN_THRESHOLD = 3
 
 # Anti-repeat: track recently shown song IDs (last ~4 comparisons = 8 songs)
 _RECENT_SONG_IDS: deque[int] = deque(maxlen=8)
@@ -70,6 +71,16 @@ def _combined_recent_pairs(db: Session) -> set[tuple[int, int]]:
     for a_id, b_id in _db_recent_rows(db, RECENT_PAIR_HISTORY):
         recent.add(_pair_key(a_id, b_id))
     return recent
+
+
+def _recent_song_frequency(db: Session) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for song_id in _recent_set():
+        counts[song_id] = counts.get(song_id, 0) + 1
+    for a_id, b_id in _db_recent_rows(db, RECENT_SONG_HISTORY):
+        counts[a_id] = counts.get(a_id, 0) + 1
+        counts[b_id] = counts.get(b_id, 0) + 1
+    return counts
 
 
 def _filter_recent(songs: list[Song], recent: set[int]) -> list[Song]:
@@ -121,21 +132,25 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
 
     recent = _combined_recent_songs(db)
     recent_pairs = _combined_recent_pairs(db)
+    recent_song_counts = _recent_song_frequency(db)
 
     # Binary-search placement: interleave so the same in-flight song doesn't
     # appear back-to-back. Only honor placement priority if the candidate
     # wasn't just shown; otherwise fall through to a normal pair this round.
     placement_song = pick_placement_song(db)
-    if placement_song is not None and placement_song.id not in recent:
-        opponent = pick_opponent(db, placement_song)
-        attempts = 0
-        while (
-            opponent is not None
-            and (opponent.id in recent or _pair_key(placement_song.id, opponent.id) in recent_pairs)
-            and attempts < 8
-        ):
-            opponent = pick_opponent(db, placement_song)
-            attempts += 1
+    if (
+        placement_song is not None
+        and placement_song.id not in recent
+        and recent_song_counts.get(placement_song.id, 0) < PLACEMENT_COOLDOWN_THRESHOLD
+    ):
+        excluded_song_ids = set(recent)
+        excluded_pair_keys = set(recent_pairs)
+        opponent = pick_opponent(
+            db,
+            placement_song,
+            exclude_song_ids=excluded_song_ids,
+            exclude_pair_keys=excluded_pair_keys,
+        )
         if (
             opponent is not None
             and opponent.id not in recent

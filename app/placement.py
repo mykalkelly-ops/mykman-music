@@ -18,6 +18,7 @@ Algorithm:
 
 Once placed, the song joins the normal pool and Glicko-2 refines it further.
 """
+import random
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,7 @@ CONVERGENCE_GAP = 100.0
 MAX_PLACEMENT_COMPARISONS = 10
 RATING_FLOOR = 600.0
 RATING_CEILING = 2400.0
+PLACEMENT_NEIGHBORHOOD = 12
 
 
 def pick_placement_song(db: Session) -> Song | None:
@@ -54,23 +56,41 @@ def pick_placement_song(db: Session) -> Song | None:
     )
 
 
-def pick_opponent(db: Session, song: Song) -> Song | None:
+def pick_opponent(
+    db: Session,
+    song: Song,
+    exclude_song_ids: set[int] | None = None,
+    exclude_pair_keys: set[tuple[int, int]] | None = None,
+) -> Song | None:
     """Pick the next opponent for a placement-pending song based on its bounds."""
+    exclude_song_ids = set(exclude_song_ids or set())
+    exclude_song_ids.add(song.id)
+    exclude_pair_keys = set(exclude_pair_keys or set())
     lo = song.placement_lo
     hi = song.placement_hi
 
     # Round 1: compare against current top-rated placed song
     if lo is None and hi is None:
-        return (
+        top_candidates = (
             db.query(Song)
-            .filter(Song.id != song.id)
+            .filter(~Song.id.in_(exclude_song_ids))
             .filter(Song.placement_pending == False)  # noqa: E712
             .order_by(Song.glicko_rating.desc())
+            .limit(PLACEMENT_NEIGHBORHOOD)
+            .all()
+        )
+        random.shuffle(top_candidates)
+        for candidate in top_candidates:
+            if tuple(sorted((song.id, candidate.id))) not in exclude_pair_keys:
+                return candidate
+        return (
+            db.query(Song)
+            .filter(~Song.id.in_(exclude_song_ids))
             .first()
         ) or (
             # cold start: no placed songs yet, just grab any other song
             db.query(Song)
-            .filter(Song.id != song.id)
+            .filter(~Song.id.in_(exclude_song_ids))
             .order_by(func.random())
             .first()
         )
@@ -81,9 +101,22 @@ def pick_opponent(db: Session, song: Song) -> Song | None:
     target = (lo_b + hi_b) / 2.0
 
     # Find the placed song closest to target rating
+    neighborhood = (
+        db.query(Song)
+        .filter(~Song.id.in_(exclude_song_ids))
+        .filter(Song.placement_pending == False)  # noqa: E712
+        .order_by(func.abs(Song.glicko_rating - target))
+        .limit(PLACEMENT_NEIGHBORHOOD)
+        .all()
+    )
+    random.shuffle(neighborhood)
+    for candidate in neighborhood:
+        if tuple(sorted((song.id, candidate.id))) not in exclude_pair_keys:
+            return candidate
+
     opponent = (
         db.query(Song)
-        .filter(Song.id != song.id)
+        .filter(~Song.id.in_(exclude_song_ids))
         .filter(Song.placement_pending == False)  # noqa: E712
         .order_by(func.abs(Song.glicko_rating - target))
         .first()
@@ -91,7 +124,7 @@ def pick_opponent(db: Session, song: Song) -> Song | None:
     if opponent is None:
         opponent = (
             db.query(Song)
-            .filter(Song.id != song.id)
+            .filter(~Song.id.in_(exclude_song_ids))
             .order_by(func.abs(Song.glicko_rating - target))
             .first()
         )
