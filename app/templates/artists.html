@@ -1,13 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Artists</h1>
-<p style="color:#888">Weighted average of album scores. Totals on this page come from MusicBrainz when available, not just the albums currently sitting in your library export.</p>
+<p style="color:#888">Weighted average of album scores and credited liked features. MYKs can include half-MYKs. Totals on this page come from MusicBrainz when available, not just the albums currently sitting in your library export.</p>
 <table>
-  <thead><tr><th>#</th><th>Artist</th><th>Score</th><th>Heard / Total Releases</th><th>Liked / Total Songs</th><th>Discography</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
+  <thead><tr><th>#</th><th>MYKs</th><th>Artist</th><th>Score</th><th>Heard / Total Releases</th><th>Liked / Total Songs</th><th>Discography</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
   <tbody>
   {% for a in artists %}
     <tr>
       <td>{{ loop.index }}</td>
+      <td>{{ render_myks(myk_score(a.score))|safe }}</td>
       <td><a href="/artists/{{ a.artist_id }}">{{ a.name }}</a></td>
       <td>{{ "%.0f"|format(a.score) }}</td>
       <td>{{ a.listened_albums }} / {{ a.total_albums if a.total_albums is not none else "?" }}</td>

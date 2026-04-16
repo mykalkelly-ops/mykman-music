@@ -9,6 +9,10 @@
 </div>
 
 <div class="panel" style="margin-top:1rem;">
+  <div style="font-size:0.9rem; color:#7a5a88; margin-bottom:0.65rem;">
+    Album MYKs: <strong>{{ render_myks(album_myks)|safe }}</strong>
+    <span style="margin-left:0.45rem;">({{ album_myks if album_myks else "unrated" }})</span>
+  </div>
   <div style="font-size:0.9rem; color:#7a5a88;">
     Total tracks:
     <strong id="album-total-label">{{ effective_total_tracks if effective_total_tracks else "?" }}</strong>
@@ -39,7 +43,7 @@
   <tbody>
     {% for row in track_rows %}
     {% set s = row.song %}
-    {% set myks = star_tier(s.glicko_rating, s.glicko_rd) if s else none %}
+    {% set myks = myk_score(s.glicko_rating, s.glicko_rd) if s else none %}
     <tr {% if row.liked %}style="background:rgba(111, 214, 138, 0.25);"{% endif %}>
       <td>{{ row.position if row.position else loop.index }}</td>
       <td>{{ render_myks(myks)|safe }}</td>

@@ -42,18 +42,49 @@ def myk_tier(rating: float, rd: float) -> int | None:
     return 1
 
 
+def myk_score(rating: float, rd: float | None = None) -> float | None:
+    """Map a Glicko-ish score to 1-5 MYKs, rounded to half-MYKs.
+
+    Songs still require confidence through RD. Album/artist scores can pass
+    rd=None because they are already derived aggregates.
+    """
+    if rd is not None and rd > TIER_RD_THRESHOLD:
+        return None
+    if rating >= 1900:
+        raw = 5.0
+    elif rating >= 1700:
+        raw = 4.0 + ((rating - 1700) / 200.0)
+    elif rating >= 1500:
+        raw = 3.0 + ((rating - 1500) / 200.0)
+    elif rating >= 1300:
+        raw = 2.0 + ((rating - 1300) / 200.0)
+    else:
+        raw = 1.0 + max(0.0, min(1.0, (rating - 1000) / 300.0))
+    return max(1.0, min(5.0, round(raw * 2) / 2))
+
+
 # Backward-compatible alias while the codebase finishes the rename.
 star_tier = myk_tier
 
 
-def render_myks(count: int | None) -> str:
+def render_myks(count: float | int | None) -> str:
     if not count:
         return "-"
+    value = max(0.0, min(5.0, float(count)))
+    whole = int(value)
+    has_half = (value - whole) >= 0.5
     badges = "".join(
         '<img src="/static/img/myk.png" alt="MYK" class="myk-badge">'
-        for _ in range(max(0, int(count)))
+        for _ in range(whole)
     )
-    return Markup(f'<span class="myk-strip" aria-label="{count} MYKs">{badges}</span>')
+    if has_half:
+        badges += (
+            '<span class="myk-half" aria-hidden="true">'
+            '<img src="/static/img/myk.png" alt="" class="myk-badge">'
+            '</span>'
+        )
+    label = f"{value:g} MYKs"
+    return Markup(f'<span class="myk-strip" aria-label="{label}" title="{label}">{badges}</span>')
 
 
 def is_various_artists_name(name: str | None) -> bool:
@@ -124,46 +155,54 @@ def _song_effective_rating(song: Song, is_liked: bool) -> float:
     return min(UNLIKED_ANCHOR, song.glicko_rating)
 
 
+def _album_score_row(album: Album, liked_ids: set[int]) -> AlbumScore | None:
+    if not is_rankable_album(album):
+        return None
+    songs = album.songs
+    if not songs:
+        return None
+    total = 0.0
+    weight_sum = 0.0
+    liked_count = 0
+    rd_sum = 0.0
+    for song in songs:
+        is_liked = song.id in liked_ids
+        if is_liked:
+            liked_count += 1
+        eff = _song_effective_rating(song, is_liked)
+        weight = max(0.1, 1.0 - (song.glicko_rd / 350.0))
+        total += eff * weight
+        weight_sum += weight
+        rd_sum += song.glicko_rd
+    score = total / weight_sum if weight_sum else 0.0
+    return AlbumScore(
+        album_id=album.id,
+        artist_id=album.artist.id if album.artist else 0,
+        title=album.title,
+        artist_name=album.artist.name if album.artist else "",
+        score=score,
+        song_count=len(songs),
+        displayed_total_tracks=effective_album_total_tracks(album),
+        liked_count=liked_count,
+        avg_rd=rd_sum / len(songs),
+        release_type=classify_release_type(album),
+    )
+
+
 def album_scores(db: Session) -> list[AlbumScore]:
     liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
     results: list[AlbumScore] = []
-    albums = db.query(Album).all()
-    for album in albums:
-        if not is_rankable_album(album):
-            continue
-        songs = album.songs
-        if not songs:
-            continue
-        total = 0.0
-        weight_sum = 0.0
-        liked_count = 0
-        rd_sum = 0.0
-        for song in songs:
-            is_liked = song.id in liked_ids
-            if is_liked:
-                liked_count += 1
-            eff = _song_effective_rating(song, is_liked)
-            weight = max(0.1, 1.0 - (song.glicko_rd / 350.0))
-            total += eff * weight
-            weight_sum += weight
-            rd_sum += song.glicko_rd
-        score = total / weight_sum if weight_sum else 0.0
-        results.append(
-            AlbumScore(
-                album_id=album.id,
-                artist_id=album.artist.id if album.artist else 0,
-                title=album.title,
-                artist_name=album.artist.name if album.artist else "",
-                score=score,
-                song_count=len(songs),
-                displayed_total_tracks=effective_album_total_tracks(album),
-                liked_count=liked_count,
-                avg_rd=rd_sum / len(songs),
-                release_type=classify_release_type(album),
-            )
-        )
+    for album in db.query(Album).all():
+        row = _album_score_row(album, liked_ids)
+        if row is not None:
+            results.append(row)
     results.sort(key=lambda row: row.score, reverse=True)
     return results
+
+
+def album_score_for(db: Session, album: Album) -> AlbumScore | None:
+    liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
+    return _album_score_row(album, liked_ids)
 
 
 def _expand_artist_genders(db: Session, artist_id: int, depth: int = 0, seen: set | None = None) -> set[str]:

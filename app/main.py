@@ -29,7 +29,7 @@ from .auth import (
 from .glicko import update_pair
 from .pair_selector import pick_pair, note_recent_pair
 from .placement import update_bounds, maybe_finalize
-from .scoring import album_scores, artist_scores, artist_score_for, top_artist_scores, myk_tier, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks, _expand_artist_genders, is_various_artists_name
+from .scoring import album_scores, album_score_for, artist_scores, artist_score_for, top_artist_scores, myk_tier, myk_score, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks, _expand_artist_genders, is_various_artists_name
 from .notes import render_markdown, resolve_target, search_notes, search_targets, related_songs_for_note
 from .canonical import canonical_key, unique_liked_song_count, progress_metrics, linked_song_groups
 from .genres import normalize_genre
@@ -402,7 +402,7 @@ def songs_list(
         query = query.join(Song.album).join(Album.artist).filter(filters)
     songs = query.order_by(Song.glicko_rating.desc()).limit(1000).all()
     parsed_tier = int(tier) if tier and tier.isdigit() else None
-    songs_with_stars = [(s, myk_tier(s.glicko_rating, s.glicko_rd)) for s in songs]
+    songs_with_stars = [(s, myk_score(s.glicko_rating, s.glicko_rd)) for s in songs]
     if parsed_tier is not None:
         songs_with_stars = [(s, st) for (s, st) in songs_with_stars if st == parsed_tier]
     songs_with_stars = songs_with_stars[:limit]
@@ -430,7 +430,15 @@ def albums_page(request: Request, unknown_first: int = 0, db: Session = Depends(
     return templates.TemplateResponse(
         request,
         "albums.html",
-        {"albums": albums_main, "eps": albums_eps, "reviewed_ids": reviewed, "covers": covers, "unknown_first": bool(unknown_first)},
+        {
+            "albums": albums_main,
+            "eps": albums_eps,
+            "reviewed_ids": reviewed,
+            "covers": covers,
+            "unknown_first": bool(unknown_first),
+            "myk_score": myk_score,
+            "render_myks": render_myks,
+        },
     )
 
 
@@ -441,7 +449,9 @@ def artists_page(request: Request, db: Session = Depends(get_session)):
     }
     images = {aid: ip for (aid, ip) in db.query(Artist.id, Artist.image_path).filter(Artist.image_path.isnot(None)).all()}
     return templates.TemplateResponse(
-        request, "artists.html", {"artists": artist_scores(db), "reviewed_ids": reviewed, "images": images}
+        request,
+        "artists.html",
+        {"artists": artist_scores(db), "reviewed_ids": reviewed, "images": images, "myk_score": myk_score, "render_myks": render_myks},
     )
 
 
@@ -551,7 +561,7 @@ def song_detail(song_id: int, request: Request, db: Session = Depends(get_sessio
         request, "song_detail.html",
         {
             "song": s,
-            "stars": myk_tier(s.glicko_rating, s.glicko_rd),
+            "stars": myk_score(s.glicko_rating, s.glicko_rd),
             "render_myks": render_myks,
             "playlists": playlists,
             "linked_songs": linked,
@@ -571,13 +581,16 @@ def album_detail(album_id: int, request: Request, db: Session = Depends(get_sess
     )
     if al is None:
         return HTMLResponse("Album not found", status_code=404)
+    album_summary = album_score_for(db, al)
     return templates.TemplateResponse(
         request, "album_detail.html",
         {
             "album": al,
+            "album_myks": myk_score(album_summary.score) if album_summary else None,
             "effective_total_tracks": effective_album_total_tracks(al),
             "track_rows": _album_track_rows(al),
             "star_tier": myk_tier,
+            "myk_score": myk_score,
             "render_myks": render_myks,
             "is_rankable_album": is_rankable_album,
             "notes": _notes_for(db, request, "album", album_id),
@@ -669,6 +682,8 @@ def artist_detail(artist_id: int, request: Request, db: Session = Depends(get_se
         {
             "artist": ar,
             "artist_summary": artist_summary,
+            "myk_score": myk_score,
+            "render_myks": render_myks,
             "albums": albums_sorted,
             "release_rows": release_rows,
             "notes": _notes_for(db, request, "artist", artist_id),
@@ -1556,7 +1571,7 @@ def stats_gender_detail(category: str, request: Request, db: Session = Depends(g
     songs_with_stars = []
     for song in songs:
         if _gender_category_for_song(db, song) == category:
-            songs_with_stars.append((song, myk_tier(song.glicko_rating, song.glicko_rd)))
+            songs_with_stars.append((song, myk_score(song.glicko_rating, song.glicko_rd)))
     reviewed_song_ids = {
         tid for (tid,) in db.query(Note.target_id).filter(Note.target_type == "song", Note.target_id.isnot(None)).distinct().all()
     }
