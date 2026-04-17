@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Artists</h1>
-<p style="color:#888">Weighted average of album scores and credited liked features. MYKs can include half-MYKs. Totals on this page come from MusicBrainz when available, not just the albums currently sitting in your library export.</p>
+<p style="color:#888">Coverage-adjusted artist scores from album scores and credited liked features. Low-discography coverage gets shrunk toward uncertainty so a few good songs do not pretend to be a complete verdict. MYKs can include half-MYKs.</p>
 <table>
   <thead><tr><th>#</th><th>MYKs</th><th>Artist</th><th>Score</th><th>Heard / Total Releases</th><th>Liked / Total Songs</th><th>Discography</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
   <tbody>

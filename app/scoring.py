@@ -20,6 +20,8 @@ from .canonical import canonical_key, linked_song_groups
 
 UNLIKED_ANCHOR = 1200.0
 TIER_RD_THRESHOLD = 120.0
+ARTIST_FULL_CONFIDENCE_COVERAGE = 0.60
+ARTIST_LOW_COVERAGE_PENALTY = 100.0
 TIER_CUTOFFS = [
     (1850, 5),
     (1700, 4),
@@ -329,6 +331,14 @@ def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: 
 
     internet_total_albums = artist.internet_release_total
     internet_total_tracks = artist.internet_track_total
+    if internet_total_tracks and internet_total_tracks > 0:
+        coverage = max(0.0, min(1.0, listened_tracks / internet_total_tracks))
+        confidence = max(0.0, min(1.0, coverage / ARTIST_FULL_CONFIDENCE_COVERAGE))
+        # Low-coverage artist scores are evidence, not verdicts. Shrink the
+        # rating toward uncertainty and apply a small uncertainty penalty so
+        # three great songs from a huge discography do not dominate the canon.
+        score = 1500.0 + ((score - 1500.0) * confidence)
+        score -= (1.0 - confidence) * ARTIST_LOW_COVERAGE_PENALTY
     return ArtistScore(
         artist_id=artist.id,
         name=artist.name,

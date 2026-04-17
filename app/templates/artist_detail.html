@@ -23,6 +23,7 @@
         Artist MYKs: <strong>{{ render_myks(myk_score(artist_summary.score))|safe }}</strong>
         <span style="margin-left:0.45rem;">({{ myk_score(artist_summary.score) if myk_score(artist_summary.score) else "unrated" }})</span>
       </div>
+      <div style="font-size:0.78rem; color:#7a5a88; margin-bottom:0.55rem;">Artist score is coverage-adjusted; incomplete discographies are treated as uncertain.</div>
       <div style="font-size:0.8rem; color:#7a5a88; margin-bottom:0.25rem;">Discography progress</div>
       {% if artist_summary.discography_percent is not none and artist_summary.known_tracks %}
         <div style="height:0.8rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
