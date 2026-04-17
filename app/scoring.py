@@ -262,6 +262,8 @@ def gender_breakdown(db: Session) -> list[tuple[str, int, float]]:
 def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: dict[int, int]) -> ArtistScore | None:
     if is_various_artists_name(artist.name):
         return None
+    if artist.kind == "collab":
+        return None
     total_weight = 0.0
     score_acc = 0.0
     credited_song_ids = {
@@ -312,21 +314,21 @@ def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: 
 
     score = (score_acc / total_weight) if total_weight else 0.0
 
-    featured_query = (
+    credited_elsewhere_query = (
         db.query(Song)
         .join(SongCredit, SongCredit.song_id == Song.id)
         .filter(
             SongCredit.artist_id == artist.id,
-            SongCredit.role == "featured",
+            SongCredit.role.in_(("primary", "featured")),
             Song.id.in_(liked_ids),
         )
     )
     own_album_ids = [al.id for al in artist.albums]
     if own_album_ids:
-        featured_query = featured_query.filter(~Song.album_id.in_(own_album_ids))
-    featured_bonus_songs = featured_query.all()
-    if featured_bonus_songs:
-        bonus_avg = sum(song.glicko_rating for song in featured_bonus_songs) / len(featured_bonus_songs)
+        credited_elsewhere_query = credited_elsewhere_query.filter(~Song.album_id.in_(own_album_ids))
+    credited_elsewhere_songs = credited_elsewhere_query.all()
+    if credited_elsewhere_songs:
+        bonus_avg = sum(song.glicko_rating for song in credited_elsewhere_songs) / len(credited_elsewhere_songs)
         score = (score * 0.9) + (bonus_avg * 0.1) if total_weight else bonus_avg
 
     internet_total_albums = artist.internet_release_total

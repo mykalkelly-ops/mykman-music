@@ -12,11 +12,12 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from .db import engine, SessionLocal
-from .models import Artist, Album, Song, Playlist, PlaylistSong, SongCredit, init_db
+from .models import Artist, Album, Song, Playlist, PlaylistSong, SongCredit, ArtistMembership, init_db
 from .dedupe import merge_case_duplicates
 from .history import backup_before_import
 from .genres import normalize_genre
 from .scoring import is_various_artists_name
+from .artist_names import split_collaboration_artists
 
 MONTH_MAP = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
@@ -65,6 +66,28 @@ def get_or_create_artist(db: Session, name: str) -> Artist:
         db.add(artist)
         db.flush()
     return artist
+
+
+def ensure_collab_artist(db: Session, artist: Artist, child_artists: list[Artist]) -> None:
+    if len(child_artists) < 2:
+        return
+    artist.kind = "collab"
+    artist.gender = "Band"
+    artist.is_band = True
+    artist.prompt_resolved = True
+    for child in child_artists:
+        if child.id == artist.id:
+            continue
+        existing = (
+            db.query(ArtistMembership)
+            .filter(
+                ArtistMembership.artist_id == artist.id,
+                ArtistMembership.child_artist_id == child.id,
+            )
+            .first()
+        )
+        if existing is None:
+            db.add(ArtistMembership(artist_id=artist.id, child_artist_id=child.id, role="member"))
 
 
 def get_or_create_album(db: Session, artist: Artist, title: str, year: int | None, genre: str | None) -> Album:
@@ -131,6 +154,7 @@ def import_library(xml_path: Path) -> dict:
 
         track_id_to_song_pk: dict[str, int] = {}
         artist_cache: dict[str, int] = {}
+        known_artist_names: set[str] = {name for (name,) in db.query(Artist.name).all()}
 
         for track_id, track in tracks.items():
             if album_key(track) not in listened_album_keys:
@@ -151,6 +175,7 @@ def import_library(xml_path: Path) -> dict:
             else:
                 artist = get_or_create_artist(db, artist_name)
                 artist_cache[cache_key] = artist.id
+                known_artist_names.add(artist.name)
 
             album = get_or_create_album(db, artist, album_title, year, genre)
             song = db.query(Song).filter(Song.apple_track_id == str(track_id)).order_by(Song.id.asc()).first()
@@ -182,13 +207,33 @@ def import_library(xml_path: Path) -> dict:
                     song.liked = True
 
             primary_artist_name = track.get("Artist") or artist_name
-            if is_various_artists_name(artist.name) and primary_artist_name:
+            if primary_artist_name:
+                primary_names = split_collaboration_artists(
+                    primary_artist_name,
+                    known_names=known_artist_names,
+                    require_known_part=True,
+                )
+            else:
+                primary_names = [artist_name]
+
+            if len(primary_names) > 1:
+                primary_artists = []
+                for primary_name in primary_names:
+                    primary_artist = get_or_create_artist(db, primary_name)
+                    known_artist_names.add(primary_artist.name)
+                    primary_artists.append(primary_artist)
+                    ensure_song_credit(db, song, primary_artist, "primary")
+                if not is_various_artists_name(artist.name):
+                    ensure_collab_artist(db, artist, primary_artists)
+            elif is_various_artists_name(artist.name) and primary_artist_name:
                 primary_artist = get_or_create_artist(db, primary_artist_name)
+                known_artist_names.add(primary_artist.name)
                 ensure_song_credit(db, song, primary_artist, "primary")
             else:
                 ensure_song_credit(db, song, artist, "primary")
             for featured_name in parse_featured_artists(name):
                 feat_artist = get_or_create_artist(db, featured_name)
+                known_artist_names.add(feat_artist.name)
                 ensure_song_credit(db, song, feat_artist, "featured")
 
             track_id_to_song_pk[str(track_id)] = song.id

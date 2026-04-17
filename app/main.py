@@ -415,6 +415,10 @@ def on_startup():
             from .backfill_people import run as run_backfill
             stats = run_backfill(db)
             print(f"[startup] backfilled people: {stats}")
+        from .repair_collabs import run as run_collab_repair
+        collab_stats = run_collab_repair(db)
+        if any(collab_stats.values()):
+            print(f"[startup] repaired collab artists: {collab_stats}")
     finally:
         db.close()
 
