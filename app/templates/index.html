@@ -133,7 +133,10 @@ pollEnrich();
   <a class="stat" href="/albums"><div class="num">{{ total_albums }}</div><div class="label">Albums</div></a>
   <a class="stat" href="/playlists/{{ playlists[0].id if playlists else '' }}"><div class="num">{{ total_playlists }}</div><div class="label">Monthly Playlists</div></a>
 </div>
-<p style="color:#888; font-size:0.85rem;">Ranking confidence is roughly {{ progress.percent }}% based on {{ progress.completed }} of an estimated {{ progress.target }} useful comparisons.</p>
+<p style="color:#888; font-size:0.85rem;">
+  Ranking progress is {{ progress.completed }} / {{ progress.first_canon_target }} toward the first stable canon.
+  The long-term archive is open-ended; the goal is signal, not finishing every possible matchup.
+</p>
 
 <h2>Recent MYK Thoughts</h2>
 {% if recent_notes %}

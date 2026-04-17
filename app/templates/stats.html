@@ -11,7 +11,33 @@
   {% endif %}
 </div>
 
-<p style="color:#888; font-size:0.85rem;">Estimated progress toward a stable ranking: {{ progress.completed }} of about {{ progress.target }} useful comparisons across {{ progress.unique_liked }} unique liked songs.</p>
+<p style="color:#888; font-size:0.85rem;">
+  Progress is staged now because a theoretical full pairwise target is not useful for a living archive.
+  {{ progress.completed }} comparisons across {{ progress.unique_liked }} unique liked songs.
+</p>
+
+<section class="panel" style="padding:1rem 1.25rem; margin-bottom:1.25rem;">
+  <h2 style="margin-top:0;">Ranking Milestones</h2>
+  {% set milestones = [
+    ("First stable canon", progress.first_canon_target, progress.first_canon_percent, "Enough signal for the site to feel meaningfully alive."),
+    ("Strong canon", progress.strong_canon_target, progress.strong_canon_percent, "The top layer should start feeling earned."),
+    ("Long-term archive depth", progress.archive_depth_target, progress.archive_depth_percent, "Obsessive refinement, not a finish line.")
+  ] %}
+  <div style="display:grid; gap:0.85rem;">
+    {% for label, target, pct, note in milestones %}
+    <div>
+      <div style="display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+        <strong>{{ label }}</strong>
+        <span style="color:#7a5a88;">{{ progress.completed }} / {{ target }} · {{ pct }}%</span>
+      </div>
+      <div style="height:0.85rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden; margin-top:0.25rem;">
+        <div style="height:100%; width:{{ pct }}%; background:linear-gradient(90deg, #ff7db8, #ffd34d);"></div>
+      </div>
+      <div style="font-size:0.82rem; color:#7a5a88; margin-top:0.2rem;">{{ note }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
 
 <section class="panel" style="padding:1rem 1.25rem; margin-bottom:1.25rem;">
   <h2 style="margin-top:0;">Quick read</h2>

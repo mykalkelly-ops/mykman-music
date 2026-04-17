@@ -1,4 +1,3 @@
-import math
 import re
 from collections import defaultdict, deque
 
@@ -74,13 +73,23 @@ def unique_liked_song_count(db: Session) -> int:
 def progress_metrics(db: Session) -> dict[str, int | float]:
     unique_liked = max(unique_liked_song_count(db), 1)
     completed = db.query(func_count_comparisons()).scalar() or 0
-    target = int(math.ceil(unique_liked * max(8, math.log2(unique_liked) * 4)))
-    pct = min(100.0, (completed / target * 100.0)) if target else 0.0
+    first_canon_target = 1000
+    strong_canon_target = 3000
+    archive_depth_target = 10000
+    first_pct = min(100.0, (completed / first_canon_target * 100.0))
+    strong_pct = min(100.0, (completed / strong_canon_target * 100.0))
+    archive_pct = min(100.0, (completed / archive_depth_target * 100.0))
     return {
         "completed": completed,
-        "target": target,
-        "percent": round(pct, 1),
+        "target": first_canon_target,
+        "percent": round(first_pct, 1),
         "unique_liked": unique_liked,
+        "first_canon_target": first_canon_target,
+        "first_canon_percent": round(first_pct, 1),
+        "strong_canon_target": strong_canon_target,
+        "strong_canon_percent": round(strong_pct, 1),
+        "archive_depth_target": archive_depth_target,
+        "archive_depth_percent": round(archive_pct, 1),
     }
 
 
