@@ -19,6 +19,10 @@ class Artist(Base):
     gender = Column(String, nullable=True)  # legacy: M / F / NB / Band / Unknown
     is_band = Column(Boolean, nullable=True)  # legacy
     country = Column(String, nullable=True)
+    origin_city = Column(String, nullable=True)
+    origin_region = Column(String, nullable=True)
+    origin_lat = Column(Float, nullable=True)
+    origin_lon = Column(Float, nullable=True)
     mb_id = Column(String, nullable=True)
     kind = Column(String, nullable=True, default="solo")  # 'solo' | 'group' | 'collab'
     image_url = Column(String, nullable=True)
@@ -273,6 +277,10 @@ def init_db(engine):
                 ("internet_release_total", "ALTER TABLE artists ADD COLUMN internet_release_total INTEGER"),
                 ("internet_track_total", "ALTER TABLE artists ADD COLUMN internet_track_total INTEGER"),
                 ("internet_synced_at", "ALTER TABLE artists ADD COLUMN internet_synced_at DATETIME"),
+                ("origin_city", "ALTER TABLE artists ADD COLUMN origin_city VARCHAR"),
+                ("origin_region", "ALTER TABLE artists ADD COLUMN origin_region VARCHAR"),
+                ("origin_lat", "ALTER TABLE artists ADD COLUMN origin_lat FLOAT"),
+                ("origin_lon", "ALTER TABLE artists ADD COLUMN origin_lon FLOAT"),
             ]:
                 if col not in artist_cols:
                     try:

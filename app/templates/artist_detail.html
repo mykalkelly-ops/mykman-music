@@ -14,6 +14,7 @@
     <div style="color:#bbb;">
       Kind: {{ artist.kind or "unset" }}
       {% if artist.country %} · {{ artist.country }}{% endif %}
+      {% if artist.origin_city %} · {{ artist.origin_city }}{% if artist.origin_region %}, {{ artist.origin_region }}{% endif %}{% endif %}
       {% if artist.start_year %} · {{ artist.start_year }}{% if artist.end_year %}–{{ artist.end_year }}{% else %}–{% endif %}{% endif %}
     </div>
     {% if artist.disambiguation %}<div style="color:#888; font-size:0.85rem;">{{ artist.disambiguation }}</div>{% endif %}
@@ -122,6 +123,17 @@
       <div id="child-results" style="font-size:0.85rem;"></div>
     </div>
   </div>
+
+  <h3>Origin for map</h3>
+  <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:end;">
+    <label>City<br><input id="origin-city" value="{{ artist.origin_city or '' }}" placeholder="Chicago"></label>
+    <label>State/region<br><input id="origin-region" value="{{ artist.origin_region or '' }}" placeholder="IL"></label>
+    <label>Country<br><input id="origin-country" value="{{ artist.country or '' }}" placeholder="US"></label>
+    <label>Latitude<br><input id="origin-lat" type="number" step="0.000001" value="{{ artist.origin_lat if artist.origin_lat is not none else '' }}" placeholder="optional"></label>
+    <label>Longitude<br><input id="origin-lon" type="number" step="0.000001" value="{{ artist.origin_lon if artist.origin_lon is not none else '' }}" placeholder="optional"></label>
+    <button id="save-origin" type="button">Save origin</button>
+  </div>
+  <div style="font-size:0.82rem; color:#7a5a88; margin-top:0.45rem;">City/state makes the stats map specific enough to show US regional taste. Coordinates are optional for common cities, but useful for precise scenes.</div>
 </div>
 
 <h2>Merge artist</h2>
@@ -139,6 +151,23 @@ document.getElementById('save-kind').onclick = async () => {
   await fetch(`/api/artists/${ARTIST_ID}/kind`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({kind}),
+  });
+  location.reload();
+};
+
+document.getElementById('save-origin').onclick = async () => {
+  const latRaw = document.getElementById('origin-lat').value;
+  const lonRaw = document.getElementById('origin-lon').value;
+  await fetch(`/api/artists/${ARTIST_ID}/origin`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      city: document.getElementById('origin-city').value,
+      region: document.getElementById('origin-region').value,
+      country: document.getElementById('origin-country').value,
+      lat: latRaw ? Number(latRaw) : null,
+      lon: lonRaw ? Number(lonRaw) : null,
+    }),
   });
   location.reload();
 };

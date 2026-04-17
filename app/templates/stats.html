@@ -64,7 +64,7 @@
 <section class="panel" style="padding:1rem 1.25rem; margin-bottom:1.25rem;">
   <h2 style="margin-top:0;">Favorite Artist World Map</h2>
   <p style="color:#7a5a88; font-size:0.9rem; margin-top:0;">
-    Country markers are based on MusicBrainz artist country metadata for artists credited on songs you liked. Bigger circles mean more credited liked artists from that place.
+    City markers use artist origin metadata when known, then fall back to country. Bigger circles mean more liked songs tied to artists from that place.
   </p>
   <div id="artist-map" style="height:430px; border:3px solid var(--void); border-radius:18px; overflow:hidden; box-shadow:4px 4px 0 var(--void); background:#e8f6ff;"></div>
   <div id="artist-map-status" style="margin-top:0.65rem; color:#7a5a88; font-size:0.85rem;">Loading artist map...</div>
@@ -170,22 +170,23 @@ async function loadArtistMap() {
     const resp = await fetch('/api/stats/artist-map');
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || 'map failed');
-    const countries = data.countries || [];
-    if (!countries.length) {
-      status.textContent = 'No country metadata yet. Enrich more artists to populate the map.';
+    const places = data.places || data.countries || [];
+    if (!places.length) {
+      status.textContent = 'No origin metadata yet. Enrich artists or set city/region manually on artist pages.';
       return;
     }
-    const maxCount = Math.max(...countries.map(c => c.artist_count || 1), 1);
-    for (const country of countries) {
-      const radius = 7 + Math.sqrt(country.artist_count / maxCount) * 28;
-      const artists = (country.artists || []).map(a => `<li><a href="/artists/${a.id}">${escapeHtml(a.name)}</a> · ${a.liked_count} liked song${a.liked_count === 1 ? '' : 's'}</li>`).join('');
+    const maxLiked = Math.max(...places.map(c => c.liked_songs || c.artist_count || 1), 1);
+    for (const place of places) {
+      const radius = 7 + Math.sqrt((place.liked_songs || place.artist_count || 1) / maxLiked) * 28;
+      const artists = (place.artists || []).map(a => `<li><a href="/artists/${a.id}">${escapeHtml(a.name)}</a> · ${a.liked_count} liked song${a.liked_count === 1 ? '' : 's'}</li>`).join('');
       const popup = `
-        <strong>${escapeHtml(country.name)}</strong><br>
-        ${country.artist_count} mapped artist${country.artist_count === 1 ? '' : 's'}<br>
-        Avg liked-song rating: ${country.avg_score || ''}
+        <strong>${escapeHtml(place.name)}</strong><br>
+        ${place.artist_count} mapped artist${place.artist_count === 1 ? '' : 's'} · ${place.liked_songs || 0} liked songs<br>
+        ${place.us_region ? `US region: ${escapeHtml(place.us_region)}<br>` : ''}
+        Avg liked-song rating: ${place.avg_score || ''}
         <ul style="margin:0.4rem 0 0 1rem; padding:0;">${artists}</ul>
       `;
-      L.circleMarker([country.lat, country.lon], {
+      L.circleMarker([place.lat, place.lon], {
         radius,
         color: '#1a0b22',
         weight: 2,
@@ -193,11 +194,17 @@ async function loadArtistMap() {
         fillOpacity: 0.62
       }).bindPopup(popup).addTo(map);
     }
-    status.textContent = `${countries.length} countries mapped${data.unknown_artists ? ` · ${data.unknown_artists} top artists missing country metadata` : ''}.`;
-    list.innerHTML = countries.slice(0, 12).map(country => `
-      <a href="#" data-lat="${country.lat}" data-lon="${country.lon}" style="display:block; background:rgba(255,255,255,0.82); border:2px solid var(--void); border-radius:14px; padding:0.65rem; box-shadow:3px 3px 0 rgba(255,122,198,0.35);">
-        <strong>${escapeHtml(country.name)}</strong><br>
-        <span style="color:#7a5a88;">${country.artist_count} artists · avg ${country.avg_score}</span>
+    const regionHtml = (data.us_regions || []).length ? `
+      <div style="grid-column:1 / -1; margin-top:0.4rem;">
+        <strong>US region read:</strong>
+        ${(data.us_regions || []).map(r => `<span style="display:inline-block; margin:0.25rem; padding:0.25rem 0.55rem; border:2px solid var(--void); border-radius:999px; background:#fff;">${escapeHtml(r.region)} · ${r.liked_songs} liked songs</span>`).join('')}
+      </div>
+    ` : '';
+    status.textContent = `${places.length} places mapped · ${data.city_level_artists || 0} artists at city-level${data.unknown_artists ? ` · ${data.unknown_artists} artists missing usable origin metadata` : ''}.`;
+    list.innerHTML = regionHtml + places.slice(0, 12).map(place => `
+      <a href="#" data-lat="${place.lat}" data-lon="${place.lon}" style="display:block; background:rgba(255,255,255,0.82); border:2px solid var(--void); border-radius:14px; padding:0.65rem; box-shadow:3px 3px 0 rgba(255,122,198,0.35);">
+        <strong>${escapeHtml(place.name)}</strong><br>
+        <span style="color:#7a5a88;">${place.artist_count} artists · ${place.liked_songs || 0} liked songs${place.us_region ? ` · ${escapeHtml(place.us_region)}` : ''}</span>
       </a>
     `).join('');
     list.querySelectorAll('[data-lat]').forEach(el => {

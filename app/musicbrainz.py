@@ -61,6 +61,8 @@ def search_artist(name: str) -> list[dict]:
             "type": a.get("type"),
             "disambiguation": a.get("disambiguation"),
             "life-span": a.get("life-span") or {},
+            "area": a.get("area") or {},
+            "begin-area": a.get("begin-area") or {},
             "score": a.get("score"),
         })
     return out
@@ -68,6 +70,11 @@ def search_artist(name: str) -> list[dict]:
 
 def get_artist(mbid: str) -> dict | None:
     url = f"{MB_BASE}/artist/{mbid}?inc=url-rels+artist-rels+release-groups&fmt=json"
+    return _get_json(url)
+
+
+def get_area(mbid: str) -> dict | None:
+    url = f"{MB_BASE}/area/{mbid}?fmt=json"
     return _get_json(url)
 
 

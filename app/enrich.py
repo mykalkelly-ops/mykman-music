@@ -26,6 +26,31 @@ def _parse_year(s: str | None) -> int | None:
         return None
 
 
+def _set_artist_origin_from_area(db: Session, artist: Artist, area: dict | None) -> None:
+    if not area:
+        return
+    if not artist.origin_city and area.get("name"):
+        artist.origin_city = area.get("name")
+    if not artist.country and area.get("country"):
+        artist.country = area.get("country")
+    coords = area.get("coordinates") or {}
+    try:
+        if artist.origin_lat is None and coords.get("latitude") is not None:
+            artist.origin_lat = float(coords.get("latitude"))
+        if artist.origin_lon is None and coords.get("longitude") is not None:
+            artist.origin_lon = float(coords.get("longitude"))
+    except Exception:
+        pass
+    if not artist.origin_region:
+        for rel in area.get("relations", []) or []:
+            if rel.get("type") != "part of":
+                continue
+            parent = rel.get("area") or {}
+            if parent.get("name"):
+                artist.origin_region = parent.get("name")
+                break
+
+
 def enrich_artist(db: Session, artist: Artist) -> dict:
     """Look up artist by name (or existing mb_id), fill metadata + members + image."""
     if is_various_artists_name(artist.name):
@@ -52,6 +77,7 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
         artist.end_year = artist.end_year or _parse_year(ls.get("end"))
         if (top.get("type") or "").lower() == "group" and artist.kind in (None, "solo"):
             artist.kind = "group"
+        _set_artist_origin_from_area(db, artist, top.get("begin-area") or top.get("area"))
 
     detail = mb.get_artist(mbid) or {}
     if detail:
@@ -66,6 +92,12 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
             artist.end_year = _parse_year(ls.get("end"))
         if (detail.get("type") or "").lower() == "group" and artist.kind in (None, "solo"):
             artist.kind = "group"
+        origin_area = detail.get("begin-area") or detail.get("area")
+        _set_artist_origin_from_area(db, artist, origin_area)
+        if origin_area and (artist.origin_lat is None or artist.origin_lon is None or not artist.origin_region):
+            area_id = origin_area.get("id")
+            if area_id:
+                _set_artist_origin_from_area(db, artist, mb.get_area(area_id))
 
         # Members: artist-rels with type "member of band" where direction=backward
         # means the related entity is a member of this band.

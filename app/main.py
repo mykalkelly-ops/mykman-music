@@ -117,6 +117,94 @@ COUNTRY_CENTROIDS = {
 }
 
 
+CITY_CENTROIDS = {
+    ("atlanta", "ga"): {"lat": 33.7490, "lon": -84.3880, "region": "South"},
+    ("chicago", "il"): {"lat": 41.8781, "lon": -87.6298, "region": "Midwest"},
+    ("detroit", "mi"): {"lat": 42.3314, "lon": -83.0458, "region": "Midwest"},
+    ("new york", "ny"): {"lat": 40.7128, "lon": -74.0060, "region": "Northeast"},
+    ("brooklyn", "ny"): {"lat": 40.6782, "lon": -73.9442, "region": "Northeast"},
+    ("queens", "ny"): {"lat": 40.7282, "lon": -73.7949, "region": "Northeast"},
+    ("los angeles", "ca"): {"lat": 34.0522, "lon": -118.2437, "region": "West"},
+    ("compton", "ca"): {"lat": 33.8958, "lon": -118.2201, "region": "West"},
+    ("long beach", "ca"): {"lat": 33.7701, "lon": -118.1937, "region": "West"},
+    ("oakland", "ca"): {"lat": 37.8044, "lon": -122.2712, "region": "West"},
+    ("san francisco", "ca"): {"lat": 37.7749, "lon": -122.4194, "region": "West"},
+    ("seattle", "wa"): {"lat": 47.6062, "lon": -122.3321, "region": "West"},
+    ("portland", "or"): {"lat": 45.5152, "lon": -122.6784, "region": "West"},
+    ("houston", "tx"): {"lat": 29.7604, "lon": -95.3698, "region": "South"},
+    ("dallas", "tx"): {"lat": 32.7767, "lon": -96.7970, "region": "South"},
+    ("austin", "tx"): {"lat": 30.2672, "lon": -97.7431, "region": "South"},
+    ("new orleans", "la"): {"lat": 29.9511, "lon": -90.0715, "region": "South"},
+    ("miami", "fl"): {"lat": 25.7617, "lon": -80.1918, "region": "South"},
+    ("baltimore", "md"): {"lat": 39.2904, "lon": -76.6122, "region": "South"},
+    ("washington", "dc"): {"lat": 38.9072, "lon": -77.0369, "region": "South"},
+    ("philadelphia", "pa"): {"lat": 39.9526, "lon": -75.1652, "region": "Northeast"},
+    ("boston", "ma"): {"lat": 42.3601, "lon": -71.0589, "region": "Northeast"},
+    ("minneapolis", "mn"): {"lat": 44.9778, "lon": -93.2650, "region": "Midwest"},
+    ("cleveland", "oh"): {"lat": 41.4993, "lon": -81.6944, "region": "Midwest"},
+    ("cincinnati", "oh"): {"lat": 39.1031, "lon": -84.5120, "region": "Midwest"},
+    ("memphis", "tn"): {"lat": 35.1495, "lon": -90.0490, "region": "South"},
+    ("nashville", "tn"): {"lat": 36.1627, "lon": -86.7816, "region": "South"},
+    ("london", ""): {"lat": 51.5072, "lon": -0.1276, "region": "United Kingdom"},
+    ("manchester", ""): {"lat": 53.4808, "lon": -2.2426, "region": "United Kingdom"},
+    ("paris", ""): {"lat": 48.8566, "lon": 2.3522, "region": "France"},
+    ("toronto", ""): {"lat": 43.6532, "lon": -79.3832, "region": "Canada"},
+    ("montreal", ""): {"lat": 45.5019, "lon": -73.5674, "region": "Canada"},
+    ("vancouver", ""): {"lat": 49.2827, "lon": -123.1207, "region": "Canada"},
+    ("tokyo", ""): {"lat": 35.6762, "lon": 139.6503, "region": "Japan"},
+    ("stockholm", ""): {"lat": 59.3293, "lon": 18.0686, "region": "Sweden"},
+    ("kingston", ""): {"lat": 18.0179, "lon": -76.8099, "region": "Jamaica"},
+    ("san juan", ""): {"lat": 18.4655, "lon": -66.1057, "region": "Puerto Rico"},
+}
+
+
+US_STATE_REGIONS = {
+    "CT": "Northeast", "ME": "Northeast", "MA": "Northeast", "NH": "Northeast", "RI": "Northeast",
+    "VT": "Northeast", "NJ": "Northeast", "NY": "Northeast", "PA": "Northeast",
+    "IL": "Midwest", "IN": "Midwest", "MI": "Midwest", "OH": "Midwest", "WI": "Midwest",
+    "IA": "Midwest", "KS": "Midwest", "MN": "Midwest", "MO": "Midwest", "NE": "Midwest",
+    "ND": "Midwest", "SD": "Midwest",
+    "DE": "South", "FL": "South", "GA": "South", "MD": "South", "NC": "South", "SC": "South",
+    "VA": "South", "DC": "South", "WV": "South", "AL": "South", "KY": "South", "MS": "South",
+    "TN": "South", "AR": "South", "LA": "South", "OK": "South", "TX": "South",
+    "AZ": "West", "CO": "West", "ID": "West", "MT": "West", "NV": "West", "NM": "West",
+    "UT": "West", "WY": "West", "AK": "West", "CA": "West", "HI": "West", "OR": "West", "WA": "West",
+}
+
+
+def _clean_region(value: str | None) -> str:
+    text = (value or "").strip()
+    if "," in text:
+        text = text.split(",")[-1].strip()
+    return text
+
+
+def _city_lookup(city: str | None, region: str | None):
+    city_key = (city or "").strip().lower()
+    region_clean = _clean_region(region)
+    region_key = region_clean.lower()
+    candidates = []
+    if region_clean:
+        candidates.extend([(city_key, region_clean.upper()), (city_key, region_key)])
+    candidates.append((city_key, ""))
+    for key in candidates:
+        if key in CITY_CENTROIDS:
+            return CITY_CENTROIDS[key]
+    return None
+
+
+def _us_region(country: str | None, region: str | None, city: str | None = None) -> str | None:
+    if (country or "").strip().upper() != "US":
+        return None
+    region_clean = _clean_region(region).upper()
+    if region_clean in US_STATE_REGIONS:
+        return US_STATE_REGIONS[region_clean]
+    city_hit = _city_lookup(city, region)
+    if city_hit:
+        return city_hit.get("region")
+    return None
+
+
 @app.middleware("http")
 async def inject_admin_flag(request: Request, call_next):
     # make is_admin available to all templates via request.state
@@ -983,6 +1071,14 @@ class ArtistMetaBody(BaseModel):
     gender: str  # M, F, NB, Band, Unknown
 
 
+class ArtistOriginBody(BaseModel):
+    city: str | None = None
+    region: str | None = None
+    country: str | None = None
+    lat: float | None = None
+    lon: float | None = None
+
+
 @app.post("/api/artist-meta")
 def set_artist_meta(body: ArtistMetaBody, request: Request, db: Session = Depends(get_session)):
     require_admin(request)
@@ -994,6 +1090,25 @@ def set_artist_meta(body: ArtistMetaBody, request: Request, db: Session = Depend
     artist.gender = body.gender
     artist.is_band = body.gender == "Band"
     artist.prompt_resolved = True
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/artists/{artist_id}/origin")
+def set_artist_origin(artist_id: int, body: ArtistOriginBody, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    artist = db.get(Artist, artist_id)
+    if artist is None:
+        raise HTTPException(404, "artist not found")
+    artist.origin_city = (body.city or "").strip() or None
+    artist.origin_region = (body.region or "").strip() or None
+    artist.country = (body.country or "").strip().upper() or None
+    artist.origin_lat = body.lat
+    artist.origin_lon = body.lon
+    hit = _city_lookup(artist.origin_city, artist.origin_region)
+    if hit and (artist.origin_lat is None or artist.origin_lon is None):
+        artist.origin_lat = hit["lat"]
+        artist.origin_lon = hit["lon"]
     db.commit()
     return {"ok": True}
 
@@ -1597,17 +1712,22 @@ def stats_page(request: Request, db: Session = Depends(get_session)):
 
 @app.get("/api/stats/artist-map")
 def artist_map_data(db: Session = Depends(get_session)):
-    """Country-level favorite artist map data.
+    """City/region-level favorite artist map data.
 
     Loaded separately from /stats. This intentionally uses a lightweight
     liked-song credit query instead of the full artist scoring path.
     """
-    country_rows: dict[str, dict] = {}
+    place_rows: dict[str, dict] = {}
+    us_region_rows: dict[str, dict] = {}
     rows = (
         db.query(
             Artist.id,
             Artist.name,
             Artist.country,
+            Artist.origin_city,
+            Artist.origin_region,
+            Artist.origin_lat,
+            Artist.origin_lon,
             func.count(func.distinct(Song.id)).label("liked_count"),
             func.avg(Song.glicko_rating).label("avg_rating"),
         )
@@ -1621,26 +1741,53 @@ def artist_map_data(db: Session = Depends(get_session)):
         .all()
     )
     unknown_artists = 0
-    for artist_id, name, country, liked_count, avg_rating in rows:
+    city_level_count = 0
+    for artist_id, name, country, origin_city, origin_region, origin_lat, origin_lon, liked_count, avg_rating in rows:
         code = (country or "").strip().upper()
-        meta = COUNTRY_CENTROIDS.get(code)
-        if not code or meta is None:
+        city_hit = _city_lookup(origin_city, origin_region)
+        lat = origin_lat if origin_lat is not None else (city_hit or {}).get("lat")
+        lon = origin_lon if origin_lon is not None else (city_hit or {}).get("lon")
+        region = _clean_region(origin_region)
+        place_name = ""
+        if origin_city:
+            city_level_count += 1
+            if region:
+                place_name = f"{origin_city}, {region}"
+            elif code:
+                place_name = f"{origin_city}, {code}"
+            else:
+                place_name = origin_city
+        else:
+            meta = COUNTRY_CENTROIDS.get(code)
+            if meta is None:
+                unknown_artists += 1
+                continue
+            lat = meta["lat"]
+            lon = meta["lon"]
+            place_name = meta["name"]
+        if lat is None or lon is None:
             unknown_artists += 1
             continue
-        item = country_rows.setdefault(
-            code,
+        key = f"{round(float(lat), 3)}:{round(float(lon), 3)}:{place_name.lower()}"
+        item = place_rows.setdefault(
+            key,
             {
                 "code": code,
-                "name": meta["name"],
-                "lat": meta["lat"],
-                "lon": meta["lon"],
+                "name": place_name,
+                "city": origin_city or "",
+                "region": region,
+                "us_region": _us_region(code, origin_region, origin_city),
+                "lat": float(lat),
+                "lon": float(lon),
                 "artist_count": 0,
                 "avg_score": 0.0,
+                "liked_songs": 0,
                 "artists": [],
             },
         )
         item["artist_count"] += 1
         item["avg_score"] += float(avg_rating or 0)
+        item["liked_songs"] += int(liked_count or 0)
         if len(item["artists"]) < 8:
             item["artists"].append(
                 {
@@ -1651,13 +1798,36 @@ def artist_map_data(db: Session = Depends(get_session)):
                     "myks": myk_score(float(avg_rating or 0)),
                 }
             )
-    rows = []
-    for item in country_rows.values():
+
+        us_region = item["us_region"]
+        if us_region:
+            reg = us_region_rows.setdefault(
+                us_region,
+                {"region": us_region, "artist_count": 0, "liked_songs": 0, "avg_score": 0.0},
+            )
+            reg["artist_count"] += 1
+            reg["liked_songs"] += int(liked_count or 0)
+            reg["avg_score"] += float(avg_rating or 0)
+
+    places = []
+    for item in place_rows.values():
         if item["artist_count"]:
             item["avg_score"] = round(item["avg_score"] / item["artist_count"])
-        rows.append(item)
-    rows.sort(key=lambda r: (r["artist_count"], r["avg_score"]), reverse=True)
-    return {"countries": rows, "unknown_artists": unknown_artists}
+        places.append(item)
+    places.sort(key=lambda r: (r["liked_songs"], r["artist_count"], r["avg_score"]), reverse=True)
+    regions = []
+    for item in us_region_rows.values():
+        if item["artist_count"]:
+            item["avg_score"] = round(item["avg_score"] / item["artist_count"])
+        regions.append(item)
+    regions.sort(key=lambda r: (r["liked_songs"], r["artist_count"]), reverse=True)
+    return {
+        "places": places,
+        "countries": places,  # backward-compatible for stale clients
+        "us_regions": regions,
+        "unknown_artists": unknown_artists,
+        "city_level_artists": city_level_count,
+    }
 
 
 def _gender_category_for_song(db: Session, song: Song) -> str:
