@@ -1,16 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Safety</h1>
-<p style="color:#888">This is the visible safety net: database snapshots, comparison-history export, and restore controls. Restore is real, so use it carefully and restart the server right after.</p>
+<p style="color:#888">This is the visible safety net: database snapshots, comparison exports, and restore controls. Restore is guarded so an older backup cannot overwrite a DB with more comparisons.</p>
 
 <div style="margin:1rem 0;">
   <button type="button" onclick="snapshotNow()">Create snapshot now</button>
+  <button type="button" onclick="exportComparisons()">Export comparisons now</button>
   <a href="/api/safety/export-history"><button type="button">Export comparison history</button></a>
+  <a href="/api/safety/export-comparisons/latest"><button type="button">Download latest comparison export</button></a>
 </div>
 
 <div class="panel" style="padding:1rem; margin-bottom:1rem;">
   <h2 style="margin-top:0;">Current state</h2>
   <p style="margin-bottom:0;">Database present: {{ "yes" if db_exists else "no" }}</p>
+  <p style="margin-bottom:0;">Comparisons in current DB: {{ comparison_count }}</p>
   <p style="margin-bottom:0;">Snapshots: {{ backups|length }}</p>
   <p style="margin-bottom:0;">Comparison journal: {{ "present" if journal_exists else "missing" }}{% if journal_exists %} ({{ journal_size }} bytes){% endif %}</p>
 </div>
@@ -40,8 +43,15 @@ async function snapshotNow() {
   if (!r.ok) { alert('Snapshot failed'); return; }
   location.reload();
 }
+async function exportComparisons() {
+  const r = await fetch('/api/safety/export-comparisons', {method: 'POST'});
+  const data = await r.json();
+  if (!r.ok) { alert(data.detail || 'Comparison export failed'); return; }
+  alert('Comparison export created.');
+  location.reload();
+}
 async function restoreBackup(filename) {
-  if (!confirm(`Restore ${filename}? This will overwrite music.db and you should restart the server immediately after.`)) return;
+  if (!confirm(`Restore ${filename}? This will overwrite music.db only if it does not reduce the comparison count. You should restart the server immediately after.`)) return;
   const r = await fetch('/api/safety/restore', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},

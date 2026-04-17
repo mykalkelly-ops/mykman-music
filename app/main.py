@@ -39,7 +39,14 @@ from .reviews import (
     any_review_candidate,
 )
 from .history import append_event
-from .history import BACKUP_DIR, JOURNAL_PATH, DB_PATH, snapshot_db
+from .history import (
+    BACKUP_DIR,
+    JOURNAL_PATH,
+    DB_PATH,
+    comparison_count_in_db,
+    export_comparisons_from_db,
+    snapshot_db,
+)
 from .paths import data_dir
 
 app = FastAPI(title="MYKMAN Music")
@@ -1640,6 +1647,7 @@ def safety_page(request: Request):
         "safety.html",
         {
             "db_exists": DB_PATH.exists(),
+            "comparison_count": comparison_count_in_db(DB_PATH) or 0,
             "backups": backups,
             "journal_exists": JOURNAL_PATH.exists(),
             "journal_size": journal_size,
@@ -1662,6 +1670,24 @@ def api_export_history(request: Request):
     return FileResponse(str(JOURNAL_PATH), filename=JOURNAL_PATH.name, media_type="application/x-ndjson")
 
 
+@app.post("/api/safety/export-comparisons")
+def api_export_comparisons(request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    path = export_comparisons_from_db(db, "manual")
+    return {"ok": True, "path": path}
+
+
+@app.get("/api/safety/export-comparisons/latest")
+def api_export_latest_comparisons(request: Request):
+    require_admin(request)
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    exports = sorted(BACKUP_DIR.glob("comparisons-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not exports:
+        return JSONResponse({"error": "comparison export not found"}, status_code=404)
+    latest = exports[0]
+    return FileResponse(str(latest), filename=latest.name, media_type="application/json")
+
+
 class RestoreBackupBody(BaseModel):
     filename: str
 
@@ -1673,6 +1699,20 @@ def api_restore_backup(body: RestoreBackupBody, request: Request):
     target = BACKUP_DIR / filename
     if not target.exists():
         raise HTTPException(404, "backup not found")
+    current_comparisons = comparison_count_in_db(DB_PATH) or 0
+    backup_comparisons = comparison_count_in_db(target)
+    if backup_comparisons is not None and backup_comparisons < current_comparisons:
+        raise HTTPException(
+            409,
+            f"refusing restore: backup has {backup_comparisons} comparisons but current DB has {current_comparisons}",
+        )
+    from .db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        export_comparisons_from_db(db, "pre-restore")
+    finally:
+        db.close()
     snapshot_db("pre-restore")
     engine.dispose()
     shutil.copy2(target, DB_PATH)
