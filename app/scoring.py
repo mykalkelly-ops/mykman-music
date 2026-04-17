@@ -331,8 +331,10 @@ def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: 
 
     internet_total_albums = artist.internet_release_total
     internet_total_tracks = artist.internet_track_total
-    if internet_total_tracks and internet_total_tracks > 0:
-        coverage = max(0.0, min(1.0, listened_tracks / internet_total_tracks))
+    displayed_total_albums = max(internet_total_albums or 0, listened_albums) or None
+    displayed_total_tracks = max(internet_total_tracks or 0, listened_tracks) or None
+    if displayed_total_tracks and displayed_total_tracks > 0:
+        coverage = max(0.0, min(1.0, listened_tracks / displayed_total_tracks))
         confidence = max(0.0, min(1.0, coverage / ARTIST_FULL_CONFIDENCE_COVERAGE))
         # Low-coverage artist scores are evidence, not verdicts. Shrink the
         # rating toward uncertainty and apply a small uncertainty penalty so
@@ -344,12 +346,12 @@ def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: 
         name=artist.name,
         score=score,
         listened_albums=listened_albums,
-        total_albums=internet_total_albums,
-        total_songs=internet_total_tracks,
+        total_albums=displayed_total_albums,
+        total_songs=displayed_total_tracks,
         liked_songs=liked_songs,
         listened_tracks=listened_tracks,
-        known_tracks=internet_total_tracks,
-        discography_percent=int(round((listened_tracks / internet_total_tracks) * 100)) if internet_total_tracks else None,
+        known_tracks=displayed_total_tracks,
+        discography_percent=int(round((listened_tracks / displayed_total_tracks) * 100)) if displayed_total_tracks else None,
     )
 
 
