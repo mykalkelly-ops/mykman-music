@@ -2196,7 +2196,7 @@ def next_pairs(n: int = 4, db: Session = Depends(get_session)):
     seen_ids: set[int] = set()
     seen_pairs: set[tuple[int, int]] = set()
     attempts = 0
-    max_attempts = max(12, n * 8)
+    max_attempts = max(60, n * 24)
     while len(pairs) < n and attempts < max_attempts:
         attempts += 1
         p = pick_pair(db)

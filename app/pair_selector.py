@@ -21,13 +21,16 @@ from .models import Song, Album, PlaylistSong, Playlist, Comparison
 from .placement import pick_placement_song, pick_opponent
 
 CANDIDATE_POOL = 60  # sample this many random songs, then score pairs
-RECENT_SONG_HISTORY = 8
-RECENT_PAIR_HISTORY = 40
+RECENT_SONG_HISTORY = 40
+RECENT_PAIR_HISTORY = 200
+RECENT_SHOWN_SONG_HISTORY = 80
+RECENT_SHOWN_PAIR_HISTORY = 500
 PLACEMENT_COOLDOWN_THRESHOLD = 3
+MAX_EVER_PAIR_EXCLUSIONS = 20000
 
 # Anti-repeat: track recently shown song IDs (last ~4 comparisons = 8 songs)
-_RECENT_SONG_IDS: deque[int] = deque(maxlen=8)
-_RECENT_PAIR_KEYS: deque[tuple[int, int]] = deque(maxlen=12)
+_RECENT_SONG_IDS: deque[int] = deque(maxlen=RECENT_SHOWN_SONG_HISTORY)
+_RECENT_PAIR_KEYS: deque[tuple[int, int]] = deque(maxlen=RECENT_SHOWN_PAIR_HISTORY)
 
 
 def _pair_key(song_a_id: int, song_b_id: int) -> tuple[int, int]:
@@ -71,6 +74,16 @@ def _combined_recent_pairs(db: Session) -> set[tuple[int, int]]:
     for a_id, b_id in _db_recent_rows(db, RECENT_PAIR_HISTORY):
         recent.add(_pair_key(a_id, b_id))
     return recent
+
+
+def _previously_compared_pairs(db: Session) -> set[tuple[int, int]]:
+    rows = (
+        db.query(Comparison.song_a_id, Comparison.song_b_id)
+        .order_by(Comparison.id.desc())
+        .limit(MAX_EVER_PAIR_EXCLUSIONS)
+        .all()
+    )
+    return {_pair_key(int(a), int(b)) for a, b in rows}
 
 
 def _recent_song_frequency(db: Session) -> dict[int, int]:
@@ -131,7 +144,7 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
         return None
 
     recent = _combined_recent_songs(db)
-    recent_pairs = _combined_recent_pairs(db)
+    recent_pairs = _combined_recent_pairs(db) | _previously_compared_pairs(db)
     recent_song_counts = _recent_song_frequency(db)
 
     # Binary-search placement: interleave so the same in-flight song doesn't

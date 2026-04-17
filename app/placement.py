@@ -31,6 +31,17 @@ RATING_CEILING = 2400.0
 PLACEMENT_NEIGHBORHOOD = 12
 
 
+def _pair_key(song_a_id: int, song_b_id: int) -> tuple[int, int]:
+    return tuple(sorted((song_a_id, song_b_id)))
+
+
+def _first_allowed(song: Song, candidates: list[Song], exclude_pair_keys: set[tuple[int, int]]) -> Song | None:
+    for candidate in candidates:
+        if _pair_key(song.id, candidate.id) not in exclude_pair_keys:
+            return candidate
+    return None
+
+
 def pick_placement_song(db: Session) -> Song | None:
     """Return a placement-pending song, preferring ones already in progress
     so we finish placing a song before starting another.
@@ -80,20 +91,17 @@ def pick_opponent(
             .all()
         )
         random.shuffle(top_candidates)
-        for candidate in top_candidates:
-            if tuple(sorted((song.id, candidate.id))) not in exclude_pair_keys:
-                return candidate
-        return (
-            db.query(Song)
-            .filter(~Song.id.in_(exclude_song_ids))
-            .first()
-        ) or (
-            # cold start: no placed songs yet, just grab any other song
+        allowed = _first_allowed(song, top_candidates, exclude_pair_keys)
+        if allowed is not None:
+            return allowed
+        fallback_candidates = (
             db.query(Song)
             .filter(~Song.id.in_(exclude_song_ids))
             .order_by(func.random())
-            .first()
+            .limit(PLACEMENT_NEIGHBORHOOD * 4)
+            .all()
         )
+        return _first_allowed(song, fallback_candidates, exclude_pair_keys)
 
     # Compute target rating at midpoint of bounds
     lo_b = lo if lo is not None else RATING_FLOOR
@@ -110,25 +118,30 @@ def pick_opponent(
         .all()
     )
     random.shuffle(neighborhood)
-    for candidate in neighborhood:
-        if tuple(sorted((song.id, candidate.id))) not in exclude_pair_keys:
-            return candidate
+    allowed = _first_allowed(song, neighborhood, exclude_pair_keys)
+    if allowed is not None:
+        return allowed
 
-    opponent = (
+    wider_neighborhood = (
         db.query(Song)
         .filter(~Song.id.in_(exclude_song_ids))
         .filter(Song.placement_pending == False)  # noqa: E712
         .order_by(func.abs(Song.glicko_rating - target))
-        .first()
+        .limit(PLACEMENT_NEIGHBORHOOD * 4)
+        .all()
     )
-    if opponent is None:
-        opponent = (
-            db.query(Song)
-            .filter(~Song.id.in_(exclude_song_ids))
-            .order_by(func.abs(Song.glicko_rating - target))
-            .first()
-        )
-    return opponent
+    allowed = _first_allowed(song, wider_neighborhood, exclude_pair_keys)
+    if allowed is not None:
+        return allowed
+
+    fallback_candidates = (
+        db.query(Song)
+        .filter(~Song.id.in_(exclude_song_ids))
+        .order_by(func.random())
+        .limit(PLACEMENT_NEIGHBORHOOD * 6)
+        .all()
+    )
+    return _first_allowed(song, fallback_candidates, exclude_pair_keys)
 
 
 def update_bounds(song: Song, opponent: Song, song_won: bool) -> None:
