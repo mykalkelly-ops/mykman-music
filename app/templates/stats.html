@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <h1>Stats</h1>
 
 <div>
@@ -58,6 +59,16 @@
       <div style="color:#7a5a88;">{{ "%.0f"|format(playlist_rows[0]["avg"]) if playlist_rows else "" }} average rating</div>
     </div>
   </div>
+</section>
+
+<section class="panel" style="padding:1rem 1.25rem; margin-bottom:1.25rem;">
+  <h2 style="margin-top:0;">Favorite Artist World Map</h2>
+  <p style="color:#7a5a88; font-size:0.9rem; margin-top:0;">
+    Country markers are based on MusicBrainz artist country metadata for artists credited on songs you liked. Bigger circles mean more credited liked artists from that place.
+  </p>
+  <div id="artist-map" style="height:430px; border:3px solid var(--void); border-radius:18px; overflow:hidden; box-shadow:4px 4px 0 var(--void); background:#e8f6ff;"></div>
+  <div id="artist-map-status" style="margin-top:0.65rem; color:#7a5a88; font-size:0.85rem;">Loading artist map...</div>
+  <div id="artist-map-list" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.55rem; margin-top:0.8rem;"></div>
 </section>
 
 <h2>Liked songs by genre</h2>
@@ -137,4 +148,73 @@
 </tr>
 {% endfor %}
 </tbody></table>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+async function loadArtistMap() {
+  const status = document.getElementById('artist-map-status');
+  const list = document.getElementById('artist-map-list');
+  if (!window.L) {
+    status.textContent = 'Map library could not load.';
+    return;
+  }
+  const map = L.map('artist-map', {
+    worldCopyJump: true,
+    scrollWheelZoom: false
+  }).setView([25, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 6,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  try {
+    const resp = await fetch('/api/stats/artist-map');
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'map failed');
+    const countries = data.countries || [];
+    if (!countries.length) {
+      status.textContent = 'No country metadata yet. Enrich more artists to populate the map.';
+      return;
+    }
+    const maxCount = Math.max(...countries.map(c => c.artist_count || 1), 1);
+    for (const country of countries) {
+      const radius = 7 + Math.sqrt(country.artist_count / maxCount) * 28;
+      const artists = (country.artists || []).map(a => `<li><a href="/artists/${a.id}">${escapeHtml(a.name)}</a> · ${a.liked_count} liked song${a.liked_count === 1 ? '' : 's'}</li>`).join('');
+      const popup = `
+        <strong>${escapeHtml(country.name)}</strong><br>
+        ${country.artist_count} mapped artist${country.artist_count === 1 ? '' : 's'}<br>
+        Avg liked-song rating: ${country.avg_score || ''}
+        <ul style="margin:0.4rem 0 0 1rem; padding:0;">${artists}</ul>
+      `;
+      L.circleMarker([country.lat, country.lon], {
+        radius,
+        color: '#1a0b22',
+        weight: 2,
+        fillColor: '#ff4fae',
+        fillOpacity: 0.62
+      }).bindPopup(popup).addTo(map);
+    }
+    status.textContent = `${countries.length} countries mapped${data.unknown_artists ? ` · ${data.unknown_artists} top artists missing country metadata` : ''}.`;
+    list.innerHTML = countries.slice(0, 12).map(country => `
+      <a href="#" data-lat="${country.lat}" data-lon="${country.lon}" style="display:block; background:rgba(255,255,255,0.82); border:2px solid var(--void); border-radius:14px; padding:0.65rem; box-shadow:3px 3px 0 rgba(255,122,198,0.35);">
+        <strong>${escapeHtml(country.name)}</strong><br>
+        <span style="color:#7a5a88;">${country.artist_count} artists · avg ${country.avg_score}</span>
+      </a>
+    `).join('');
+    list.querySelectorAll('[data-lat]').forEach(el => {
+      el.addEventListener('click', event => {
+        event.preventDefault();
+        map.setView([Number(el.dataset.lat), Number(el.dataset.lon)], 4);
+      });
+    });
+  } catch (err) {
+    status.textContent = 'Could not load artist map data.';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+loadArtistMap();
+</script>
 {% endblock %}

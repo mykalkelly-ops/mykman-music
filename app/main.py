@@ -68,6 +68,55 @@ KOFI_URL = os.environ.get("KOFI_URL", "https://ko-fi.com/mykman")
 KOFI_VERIFICATION_TOKEN = os.environ.get("KOFI_VERIFICATION_TOKEN", "")
 
 
+COUNTRY_CENTROIDS = {
+    "US": {"name": "United States", "lat": 39.8283, "lon": -98.5795},
+    "GB": {"name": "United Kingdom", "lat": 55.3781, "lon": -3.4360},
+    "CA": {"name": "Canada", "lat": 56.1304, "lon": -106.3468},
+    "FR": {"name": "France", "lat": 46.2276, "lon": 2.2137},
+    "PR": {"name": "Puerto Rico", "lat": 18.2208, "lon": -66.5901},
+    "JP": {"name": "Japan", "lat": 36.2048, "lon": 138.2529},
+    "SE": {"name": "Sweden", "lat": 60.1282, "lon": 18.6435},
+    "CO": {"name": "Colombia", "lat": 4.5709, "lon": -74.2973},
+    "IT": {"name": "Italy", "lat": 41.8719, "lon": 12.5674},
+    "JM": {"name": "Jamaica", "lat": 18.1096, "lon": -77.2975},
+    "IE": {"name": "Ireland", "lat": 53.1424, "lon": -7.6921},
+    "ES": {"name": "Spain", "lat": 40.4637, "lon": -3.7492},
+    "DE": {"name": "Germany", "lat": 51.1657, "lon": 10.4515},
+    "AU": {"name": "Australia", "lat": -25.2744, "lon": 133.7751},
+    "NO": {"name": "Norway", "lat": 60.4720, "lon": 8.4689},
+    "NG": {"name": "Nigeria", "lat": 9.0820, "lon": 8.6753},
+    "IS": {"name": "Iceland", "lat": 64.9631, "lon": -19.0208},
+    "CV": {"name": "Cabo Verde", "lat": 16.5388, "lon": -23.0418},
+    "BR": {"name": "Brazil", "lat": -14.2350, "lon": -51.9253},
+    "VE": {"name": "Venezuela", "lat": 6.4238, "lon": -66.5897},
+    "NZ": {"name": "New Zealand", "lat": -40.9006, "lon": 174.8860},
+    "NL": {"name": "Netherlands", "lat": 52.1326, "lon": 5.2913},
+    "MX": {"name": "Mexico", "lat": 23.6345, "lon": -102.5528},
+    "KR": {"name": "South Korea", "lat": 35.9078, "lon": 127.7669},
+    "CL": {"name": "Chile", "lat": -35.6751, "lon": -71.5430},
+    "CH": {"name": "Switzerland", "lat": 46.8182, "lon": 8.2275},
+    "AR": {"name": "Argentina", "lat": -38.4161, "lon": -63.6167},
+    "CU": {"name": "Cuba", "lat": 21.5218, "lon": -77.7812},
+    "DO": {"name": "Dominican Republic", "lat": 18.7357, "lon": -70.1627},
+    "HT": {"name": "Haiti", "lat": 18.9712, "lon": -72.2852},
+    "ZA": {"name": "South Africa", "lat": -30.5595, "lon": 22.9375},
+    "ET": {"name": "Ethiopia", "lat": 9.1450, "lon": 40.4897},
+    "GH": {"name": "Ghana", "lat": 7.9465, "lon": -1.0232},
+    "KE": {"name": "Kenya", "lat": -0.0236, "lon": 37.9062},
+    "RU": {"name": "Russia", "lat": 61.5240, "lon": 105.3188},
+    "UA": {"name": "Ukraine", "lat": 48.3794, "lon": 31.1656},
+    "PL": {"name": "Poland", "lat": 51.9194, "lon": 19.1451},
+    "PT": {"name": "Portugal", "lat": 39.3999, "lon": -8.2245},
+    "BE": {"name": "Belgium", "lat": 50.5039, "lon": 4.4699},
+    "DK": {"name": "Denmark", "lat": 56.2639, "lon": 9.5018},
+    "FI": {"name": "Finland", "lat": 61.9241, "lon": 25.7482},
+    "CN": {"name": "China", "lat": 35.8617, "lon": 104.1954},
+    "IN": {"name": "India", "lat": 20.5937, "lon": 78.9629},
+    "IR": {"name": "Iran", "lat": 32.4279, "lon": 53.6880},
+    "TR": {"name": "Turkey", "lat": 38.9637, "lon": 35.2433},
+}
+
+
 @app.middleware("http")
 async def inject_admin_flag(request: Request, call_next):
     # make is_admin available to all templates via request.state
@@ -1544,6 +1593,71 @@ def stats_page(request: Request, db: Session = Depends(get_session)):
             "max_artist_score": max_artist_score,
         },
     )
+
+
+@app.get("/api/stats/artist-map")
+def artist_map_data(db: Session = Depends(get_session)):
+    """Country-level favorite artist map data.
+
+    Loaded separately from /stats. This intentionally uses a lightweight
+    liked-song credit query instead of the full artist scoring path.
+    """
+    country_rows: dict[str, dict] = {}
+    rows = (
+        db.query(
+            Artist.id,
+            Artist.name,
+            Artist.country,
+            func.count(func.distinct(Song.id)).label("liked_count"),
+            func.avg(Song.glicko_rating).label("avg_rating"),
+        )
+        .join(SongCredit, SongCredit.artist_id == Artist.id)
+        .join(Song, Song.id == SongCredit.song_id)
+        .join(PlaylistSong, PlaylistSong.song_id == Song.id)
+        .filter(SongCredit.role.in_(("primary", "featured")))
+        .group_by(Artist.id, Artist.name, Artist.country)
+        .order_by(func.count(func.distinct(Song.id)).desc(), func.avg(Song.glicko_rating).desc())
+        .limit(500)
+        .all()
+    )
+    unknown_artists = 0
+    for artist_id, name, country, liked_count, avg_rating in rows:
+        code = (country or "").strip().upper()
+        meta = COUNTRY_CENTROIDS.get(code)
+        if not code or meta is None:
+            unknown_artists += 1
+            continue
+        item = country_rows.setdefault(
+            code,
+            {
+                "code": code,
+                "name": meta["name"],
+                "lat": meta["lat"],
+                "lon": meta["lon"],
+                "artist_count": 0,
+                "avg_score": 0.0,
+                "artists": [],
+            },
+        )
+        item["artist_count"] += 1
+        item["avg_score"] += float(avg_rating or 0)
+        if len(item["artists"]) < 8:
+            item["artists"].append(
+                {
+                    "id": artist_id,
+                    "name": name,
+                    "score": round(float(avg_rating or 0)),
+                    "liked_count": int(liked_count or 0),
+                    "myks": myk_score(float(avg_rating or 0)),
+                }
+            )
+    rows = []
+    for item in country_rows.values():
+        if item["artist_count"]:
+            item["avg_score"] = round(item["avg_score"] / item["artist_count"])
+        rows.append(item)
+    rows.sort(key=lambda r: (r["artist_count"], r["avg_score"]), reverse=True)
+    return {"countries": rows, "unknown_artists": unknown_artists}
 
 
 def _gender_category_for_song(db: Session, song: Song) -> str:
