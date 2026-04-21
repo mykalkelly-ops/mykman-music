@@ -2,6 +2,8 @@
 
 Local app that ingests an Apple Music library export and will (eventually) produce a living ranking of your favorite songs, albums, and artists via Glicko-2 pairwise comparisons.
 
+For project memory, completed feature history, current product decisions, and new-chat handoff context, start with [`PROJECT_HANDOFF.md`](PROJECT_HANDOFF.md).
+
 ## Phase 1 — what works right now
 
 - Parses `Library.xml` exported from the Mac Music app
