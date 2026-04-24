@@ -6,6 +6,7 @@
 <div style="margin:1rem 0;">
   <button type="button" onclick="snapshotNow()">Create snapshot now</button>
   <button type="button" onclick="exportComparisons()">Export comparisons now</button>
+  <button type="button" onclick="repairKnownArtists()">Repair known artist aliases</button>
   <a href="/api/safety/export-history"><button type="button">Export comparison history</button></a>
   <a href="/api/safety/export-comparisons/latest"><button type="button">Download latest comparison export</button></a>
 </div>
@@ -48,6 +49,15 @@ async function exportComparisons() {
   const data = await r.json();
   if (!r.ok) { alert(data.detail || 'Comparison export failed'); return; }
   alert('Comparison export created.');
+  location.reload();
+}
+async function repairKnownArtists() {
+  if (!confirm('Run the known artist repair? This will create a safety snapshot/export first, then merge known aliases like Ye/Donda into Kanye West and mark the repaired canonical artist as resolved.')) return;
+  const r = await fetch('/api/safety/repair-known-artists', {method: 'POST'});
+  const data = await r.json();
+  if (!r.ok) { alert(data.detail || 'Known artist repair failed'); return; }
+  const stats = data.stats || {};
+  alert(`Known artist repair complete. Aliases merged: ${stats.aliases_merged || 0}. Artists updated: ${stats.artists_updated || 0}.`);
   location.reload();
 }
 async function restoreBackup(filename) {

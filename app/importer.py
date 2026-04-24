@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .db import engine, SessionLocal
 from .models import Artist, Album, Song, Playlist, PlaylistSong, SongCredit, ArtistMembership, init_db
-from .dedupe import merge_case_duplicates
+from .dedupe import merge_case_duplicates, merge_known_artist_aliases
 from .history import backup_before_import
 from .genres import normalize_genre
 from .scoring import is_various_artists_name
@@ -270,6 +270,7 @@ def import_library(xml_path: Path) -> dict:
 
         db.commit()
         merge_case_duplicates(db)
+        merge_known_artist_aliases(db)
         stats["artists"] = db.query(Artist).count()
         stats["albums"] = db.query(Album).count()
     finally:

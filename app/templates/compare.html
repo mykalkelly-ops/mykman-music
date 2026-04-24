@@ -270,8 +270,10 @@ document.getElementById('undo').onclick = async () => {
 
 async function loadPrompt() {
   const exclude = getRecentPromptIds();
-  const qs = exclude.length ? ('?exclude=' + encodeURIComponent(exclude.join(','))) : '';
-  const r = await fetch('/api/next-artist-prompt' + qs);
+  const params = new URLSearchParams();
+  if (exclude.length) params.set('exclude', exclude.join(','));
+  params.set('_', String(Date.now()));
+  const r = await fetch('/api/next-artist-prompt?' + params.toString(), { cache: 'no-store' });
   const data = await r.json();
   const el = document.getElementById('prompt');
   if (!data.artist) { el.style.display = 'none'; return; }

@@ -22,6 +22,8 @@ UNLIKED_ANCHOR = 1200.0
 TIER_RD_THRESHOLD = 120.0
 ARTIST_FULL_CONFIDENCE_COVERAGE = 0.60
 ARTIST_LOW_COVERAGE_PENALTY = 100.0
+ARTIST_FULL_CONFIDENCE_EVIDENCE_TRACKS = 8
+ARTIST_LOW_EVIDENCE_PENALTY = 75.0
 TIER_CUTOFFS = [
     (1850, 5),
     (1700, 4),
@@ -327,22 +329,43 @@ def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: 
     if own_album_ids:
         credited_elsewhere_query = credited_elsewhere_query.filter(~Song.album_id.in_(own_album_ids))
     credited_elsewhere_songs = credited_elsewhere_query.all()
+    evidence_tracks = listened_tracks
     if credited_elsewhere_songs:
         bonus_avg = sum(song.glicko_rating for song in credited_elsewhere_songs) / len(credited_elsewhere_songs)
         score = (score * 0.9) + (bonus_avg * 0.1) if total_weight else bonus_avg
+        for song in credited_elsewhere_songs:
+            gid = groups.get(song.id)
+            key = ("linked", gid) if gid is not None else canonical_key(song)
+            if key in seen_canonical:
+                continue
+            seen_canonical.add(key)
+            liked_songs += 1
+            evidence_tracks += 1
 
     internet_total_albums = artist.internet_release_total
     internet_total_tracks = artist.internet_track_total
     displayed_total_albums = max(internet_total_albums or 0, listened_albums) or None
     displayed_total_tracks = max(internet_total_tracks or 0, listened_tracks) or None
+    evidence_confidence = max(
+        0.0,
+        min(1.0, evidence_tracks / ARTIST_FULL_CONFIDENCE_EVIDENCE_TRACKS),
+    )
     if displayed_total_tracks and displayed_total_tracks > 0:
         coverage = max(0.0, min(1.0, listened_tracks / displayed_total_tracks))
-        confidence = max(0.0, min(1.0, coverage / ARTIST_FULL_CONFIDENCE_COVERAGE))
+        confidence = min(
+            evidence_confidence,
+            max(0.0, min(1.0, coverage / ARTIST_FULL_CONFIDENCE_COVERAGE)),
+        )
         # Low-coverage artist scores are evidence, not verdicts. Shrink the
         # rating toward uncertainty and apply a small uncertainty penalty so
         # three great songs from a huge discography do not dominate the canon.
         score = 1500.0 + ((score - 1500.0) * confidence)
         score -= (1.0 - confidence) * ARTIST_LOW_COVERAGE_PENALTY
+    elif evidence_confidence < 1.0:
+        # Without internet totals, a single credited favorite should read as
+        # "promising evidence", not as a verdict on the whole artist.
+        score = 1500.0 + ((score - 1500.0) * evidence_confidence)
+        score -= (1.0 - evidence_confidence) * ARTIST_LOW_EVIDENCE_PENALTY
     return ArtistScore(
         artist_id=artist.id,
         name=artist.name,

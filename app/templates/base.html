@@ -266,6 +266,7 @@
 <body>
 <header>
   <a href="/"><strong>MYKMAN Music</strong></a>
+  {% if request.state.is_admin %}<a href="/today">Today</a>{% endif %}
   {% if request.state.is_admin %}<a href="/compare">Compare</a>{% endif %}
   <a href="/songs">Songs</a>
   <a href="/albums">Albums</a>

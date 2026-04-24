@@ -90,6 +90,7 @@
   <h2 style="margin-top:0;">Admin queue</h2>
   <p style="color:#888; margin-top:0;">A few unglamorous things that keep the archive honest and safe.</p>
   <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+    <a class="stat" href="/today"><div class="num">now</div><div class="label">Today</div></a>
     <a class="stat" href="/album-queue"><div class="num">{{ album_queue_count }}</div><div class="label">Albums To Confirm</div></a>
     <a class="stat" href="/safety"><div class="num">{{ backup_count }}</div><div class="label">Snapshots</div></a>
   </div>
@@ -114,7 +115,8 @@ async function pollEnrich() {
     const r = await fetch('/api/enrich-status');
     const s = await r.json();
     if (s.running || s.done > 0) {
-      el.textContent = `${s.done} / ${s.total} - ${s.current || ''}`;
+      const tail = s.remaining ? ` (${s.remaining} still queued after this batch)` : '';
+      el.textContent = `${s.done} / ${s.total} - ${s.current || ''}${tail}`;
     }
     if (s.running) setTimeout(pollEnrich, 2000);
     else document.getElementById('enrich-btn').disabled = false;

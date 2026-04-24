@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Today - MYKMAN Music{% endblock %}
+{% block content %}
+<h1>Today</h1>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Protect the comparisons</h2>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:stretch;">
+    <a class="stat" href="/comparisons"><div class="num">{{ safety.comparison_count }}</div><div class="label">Current DB Comparisons</div></a>
+    <a class="stat" href="/safety"><div class="num">{{ safety.snapshot_count }}</div><div class="label">DB Snapshots</div></a>
+    <a class="stat" href="/safety"><div class="num">{{ safety.latest_export_count if safety.latest_export_count is not none else "?" }}</div><div class="label">Latest Export Count</div></a>
+  </div>
+  {% if safety.export_warning %}
+    <p style="color:#8a133d; font-weight:700; margin-bottom:0;">{{ safety.export_warning }}</p>
+  {% else %}
+    <p style="color:#7a5a88; margin-bottom:0;">Latest comparison export: {{ safety.latest_export_name or "none yet" }}</p>
+  {% endif %}
+  <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:1rem;">
+    <button type="button" onclick="snapshotToday()">Snapshot DB</button>
+    <button type="button" onclick="exportToday()">Export comparisons</button>
+    <a href="/api/safety/export-comparisons/latest"><button type="button">Download latest export</button></a>
+    <a href="/safety"><button type="button">Open safety</button></a>
+  </div>
+</section>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Ranking session</h2>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+    <a class="stat" href="/compare"><div class="num">{{ ranking.today_count }}</div><div class="label">Today</div></a>
+    <a class="stat" href="/stats"><div class="num">{{ ranking.progress.first_canon_percent }}%</div><div class="label">First Canon</div></a>
+    <a class="stat" href="/songs"><div class="num">{{ ranking.compared_songs }}</div><div class="label">Songs Touched</div></a>
+    <a class="stat" href="/compare"><div class="num">{{ ranking.placement_pending }}</div><div class="label">Placement Pending</div></a>
+  </div>
+  <p style="color:#7a5a88;">
+    {{ ranking.progress.completed }} / {{ ranking.progress.first_canon_target }} comparisons toward the first stable canon.
+    Public pages should talk about meaningful signal, not impossible full pairwise completion.
+  </p>
+  <a href="/compare"><button type="button">Start 25-minute ranking ritual</button></a>
+</section>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Writing</h2>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+    <a class="stat" href="/notes"><div class="num">{{ writing.published_count }}</div><div class="label">Published Thoughts</div></a>
+    <a class="stat" href="/notes"><div class="num">{{ writing.draft_count }}</div><div class="label">Drafts</div></a>
+    <a class="stat" href="/notes"><div class="num">{{ writing.subscriber_count }}</div><div class="label">Subscriber Pieces</div></a>
+  </div>
+  <p style="color:#7a5a88;">
+    {% if writing.why_note %}
+      <a href="/thoughts/{{ writing.why_note.id }}">why i am doing this project</a>
+      {% if writing.why_note.status == "draft" %}<span style="color:#7a5a88;">(draft)</span>{% endif %}
+    {% else %}
+      <a href="/notes/new?target_type=general">Start the "why i am doing this project" essay</a>
+    {% endif %}
+  </p>
+  {% if writing.review_songs or writing.review_albums %}
+    <table>
+      <thead><tr><th>Review prompt</th><th>Type</th><th>Score</th></tr></thead>
+      <tbody>
+      {% for s in writing.review_songs %}
+        <tr><td><a href="/notes/new?target_type=song&target_id={{ s.id }}">{{ s.title }} - {{ s.artist }}</a></td><td>Song</td><td>{{ "%.0f"|format(s.rating) }}</td></tr>
+      {% endfor %}
+      {% for a in writing.review_albums %}
+        <tr><td><a href="/notes/new?target_type=album&target_id={{ a.id }}">{{ a.title }} - {{ a.artist }}</a></td><td>Album</td><td>{{ "%.0f"|format(a.score) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p style="color:#7a5a88; margin-bottom:0;">No high-confidence review prompts yet. More comparisons will wake this section up.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Cleanup</h2>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+    <a class="stat" href="/artists"><div class="num">{{ cleanup.unresolved_artists }}</div><div class="label">Unresolved Artists</div></a>
+    <a class="stat" href="/stats"><div class="num">{{ cleanup.missing_origin }}</div><div class="label">Missing Origin</div></a>
+    <a class="stat" href="/artists"><div class="num">{{ cleanup.artists_missing_image }}</div><div class="label">Artists Missing Image</div></a>
+    <a class="stat" href="/albums"><div class="num">{{ cleanup.albums_missing_cover }}</div><div class="label">Albums Missing Cover</div></a>
+    <a class="stat" href="/album-queue"><div class="num">{{ cleanup.album_queue_count }}</div><div class="label">Albums To Confirm</div></a>
+  </div>
+  <p style="color:#7a5a88; margin-bottom:0;">Manual corrections matter because MusicBrainz is useful, weird, and occasionally confidently wrong.</p>
+</section>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Listen next</h2>
+  {% if listen_next %}
+    <table>
+      <thead><tr><th>Target</th><th>Type</th><th>Note</th></tr></thead>
+      <tbody>
+      {% for item in listen_next %}
+        <tr>
+          <td><a href="{{ item.href }}">{{ item.label }}</a>{% if item.subtitle %}<span style="color:#7a5a88;"> - {{ item.subtitle }}</span>{% endif %}</td>
+          <td>{{ item.target_type }}</td>
+          <td>{{ item.note }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p><a href="/listen-next">Open full listen-next queue</a></p>
+  {% else %}
+    <p style="color:#7a5a88; margin-bottom:0;">Nothing queued right now.</p>
+  {% endif %}
+</section>
+
+<script>
+async function snapshotToday() {
+  const r = await fetch('/api/safety/snapshot', {method: 'POST'});
+  if (!r.ok) { alert('Snapshot failed'); return; }
+  location.reload();
+}
+async function exportToday() {
+  const r = await fetch('/api/safety/export-comparisons', {method: 'POST'});
+  const data = await r.json();
+  if (!r.ok) { alert(data.detail || 'Comparison export failed'); return; }
+  alert('Comparison export created.');
+  location.reload();
+}
+</script>
+{% endblock %}

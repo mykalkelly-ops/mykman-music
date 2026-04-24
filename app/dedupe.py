@@ -5,6 +5,11 @@ from sqlalchemy.orm import Session
 from .models import Artist, Album, Song, PlaylistSong, Comparison, Note, SongCredit, ArtistMembership
 
 
+ARTIST_ALIASES = {
+    "Kanye West": ["Ye", "Donda"],
+}
+
+
 def _norm(text: str | None) -> str:
     return (text or "").strip().lower()
 
@@ -114,7 +119,7 @@ def _merge_artist_into(db: Session, keep: Artist, drop: Artist) -> None:
         if match:
             _merge_album_into(db, match, album)
         else:
-            album.artist_id = keep.id
+            keep.albums.append(album)
             existing_albums[_norm(album.title)] = album
 
     for note in db.query(Note).filter(Note.target_type == "artist", Note.target_id == drop.id).all():
@@ -210,3 +215,54 @@ def merge_artist_names(db: Session, keep_name: str, drop_name: str) -> bool:
     _merge_artist_into(db, keep, drop)
     db.commit()
     return True
+
+
+def merge_known_artist_aliases(db: Session) -> dict[str, int]:
+    merged_artists = 0
+    for keep_name, alias_names in ARTIST_ALIASES.items():
+        keep = db.query(Artist).filter(Artist.name.ilike(keep_name)).order_by(Artist.id.asc()).first()
+        if keep is None:
+            continue
+        merged_any = False
+        for alias_name in alias_names:
+            aliases = (
+                db.query(Artist)
+                .filter(Artist.name.ilike(alias_name), Artist.id != keep.id)
+                .order_by(Artist.id.asc())
+                .all()
+            )
+            for alias in aliases:
+                _merge_artist_into(db, keep, alias)
+                merged_artists += 1
+                merged_any = True
+                db.flush()
+        if merged_any and keep_name.lower() == "kanye west":
+            keep.kind = keep.kind or "solo"
+            keep.prompt_resolved = True
+    db.commit()
+    return {"artists": merged_artists}
+
+
+def repair_known_artist_data(db: Session) -> dict[str, int]:
+    alias_stats = merge_known_artist_aliases(db)
+    artists_updated = 0
+
+    kanye = db.query(Artist).filter(Artist.name.ilike("Kanye West")).order_by(Artist.id.asc()).first()
+    if kanye is not None:
+        kanye_titles = {_norm(album.title) for album in kanye.albums}
+        if "donda 2" in kanye_titles or "bully - ep" in kanye_titles:
+            changed = False
+            if kanye.kind in (None, ""):
+                kanye.kind = "solo"
+                changed = True
+            if kanye.prompt_resolved is not True:
+                kanye.prompt_resolved = True
+                changed = True
+            if changed:
+                artists_updated += 1
+
+    db.commit()
+    return {
+        "aliases_merged": alias_stats["artists"],
+        "artists_updated": artists_updated,
+    }

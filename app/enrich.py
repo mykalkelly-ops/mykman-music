@@ -12,9 +12,12 @@ progress = {
     "running": False,
     "done": 0,
     "total": 0,
+    "remaining": 0,
     "current": "",
     "error": None,
 }
+
+BULK_ENRICH_BATCH_SIZE = 50
 
 
 def _parse_year(s: str | None) -> int | None:
@@ -361,26 +364,33 @@ def enrich_album(db: Session, album: Album) -> dict:
     }
 
 
-def bulk_enrich(SessionFactory):
-    """Background task: enrich all un-enriched artists and albums."""
+def bulk_enrich(SessionFactory, batch_size: int = BULK_ENRICH_BATCH_SIZE):
+    """Background task: enrich a bounded batch of unresolved artists/albums."""
     progress["running"] = True
     progress["done"] = 0
     progress["error"] = None
     db = SessionFactory()
     try:
-        artists = [
+        all_artists = [
             artist
             for artist in db.query(Artist).filter(
             (Artist.mb_id.is_(None)) | (Artist.internet_release_total.is_(None)) | (Artist.internet_track_total.is_(None))
             ).all()
             if not is_various_artists_name(artist.name)
         ]
-        albums = [
+        all_albums = [
             album
             for album in db.query(Album).filter(Album.mb_id.is_(None), Album.release_group_mb_id.is_(None)).all()
             if album.artist is None or not is_various_artists_name(album.artist.name)
         ]
+        artists = all_artists[:batch_size]
+        album_slots = max(0, batch_size - len(artists))
+        albums = all_albums[:album_slots]
         progress["total"] = len(artists) + len(albums)
+        progress["remaining"] = max(0, len(all_artists) + len(all_albums) - progress["total"])
+        if progress["total"] == 0:
+            progress["current"] = "nothing queued"
+            return
         for a in artists:
             progress["current"] = f"Artist: {a.name}"
             print(f"[enrich] {progress['current']} ({progress['done']}/{progress['total']})")

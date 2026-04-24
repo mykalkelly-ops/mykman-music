@@ -33,6 +33,7 @@ from .scoring import album_scores, album_score_for, artist_scores, artist_score_
 from .notes import render_markdown, resolve_target, search_notes, search_targets, related_songs_for_note
 from .canonical import canonical_key, unique_liked_song_count, progress_metrics, linked_song_groups
 from .genres import normalize_genre
+from .dedupe import repair_known_artist_data
 from .reviews import (
     loved_songs_needing_review,
     loved_albums_needing_review,
@@ -419,6 +420,10 @@ def on_startup():
         collab_stats = run_collab_repair(db)
         if any(collab_stats.values()):
             print(f"[startup] repaired collab artists: {collab_stats}")
+        from .dedupe import merge_known_artist_aliases
+        alias_stats = merge_known_artist_aliases(db)
+        if any(alias_stats.values()):
+            print(f"[startup] merged known artist aliases: {alias_stats}")
     finally:
         db.close()
 
@@ -504,6 +509,154 @@ def index(request: Request, db: Session = Depends(get_session)):
             "why_note": why_note,
             "album_queue_count": album_queue_count,
             "backup_count": backup_count,
+        },
+    )
+
+
+def _latest_comparison_export_info() -> dict:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    exports = sorted(BACKUP_DIR.glob("comparisons-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not exports:
+        return {"name": None, "count": None, "mtime": None, "size": None}
+    latest = exports[0]
+    count = None
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+        count = int(payload.get("comparison_count")) if payload.get("comparison_count") is not None else None
+    except Exception:
+        count = None
+    return {
+        "name": latest.name,
+        "count": count,
+        "mtime": datetime.fromtimestamp(latest.stat().st_mtime),
+        "size": latest.stat().st_size,
+    }
+
+
+def _listen_queue_preview(db: Session, limit: int = 5) -> list[dict]:
+    rows = db.query(ListenQueueItem).order_by(ListenQueueItem.created_at.desc()).limit(limit).all()
+    items = []
+    for row in rows:
+        label = "Unknown"
+        href = "#"
+        subtitle = ""
+        if row.target_type == "album":
+            album = db.get(Album, row.target_id)
+            if album:
+                label = album.title
+                href = f"/albums/{album.id}"
+                subtitle = album.artist.name if album.artist else ""
+        elif row.target_type == "artist":
+            artist = db.get(Artist, row.target_id)
+            if artist:
+                label = artist.name
+                href = f"/artists/{artist.id}"
+        items.append(
+            {
+                "id": row.id,
+                "target_type": row.target_type,
+                "label": label,
+                "href": href,
+                "subtitle": subtitle,
+                "note": row.note or "",
+                "created_at": row.created_at,
+            }
+        )
+    return items
+
+
+@app.get("/today", response_class=HTMLResponse)
+def today_page(request: Request, db: Session = Depends(get_session)):
+    if not is_admin(request):
+        return RedirectResponse("/login", status_code=302)
+
+    comparison_count = db.query(func.count(Comparison.id)).scalar() or 0
+    start_of_day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_count = (
+        db.query(func.count(Comparison.id))
+        .filter(Comparison.created_at >= start_of_day)
+        .scalar()
+        or 0
+    )
+    compared_songs = db.query(func.count(Song.id)).filter(Song.comparison_count > 0).scalar() or 0
+    placement_pending = db.query(func.count(Song.id)).filter(Song.placement_pending == True).scalar() or 0  # noqa: E712
+    latest_export = _latest_comparison_export_info()
+    snapshot_count = len(list(BACKUP_DIR.glob("*.db"))) if BACKUP_DIR.exists() else 0
+    export_warning = ""
+    export_count = latest_export.get("count")
+    if export_count is None:
+        export_warning = "No readable comparison export found yet. Export before imports, restores, or deploy-risky work."
+    elif export_count < comparison_count:
+        export_warning = f"Latest export has {export_count} comparisons, but the current DB has {comparison_count}. Export before touching data."
+    elif export_count > comparison_count:
+        export_warning = f"Latest export has {export_count} comparisons, but the current DB has {comparison_count}. Do not overwrite richer data with this DB."
+
+    why_note = (
+        db.query(Note)
+        .filter(
+            Note.target_type == "general",
+            func.lower(Note.title) == "why i am doing this project",
+        )
+        .order_by(Note.id.desc())
+        .first()
+    )
+
+    cleanup = {
+        "unresolved_artists": (
+            db.query(func.count(Artist.id))
+            .filter((Artist.prompt_resolved == False) | (Artist.prompt_resolved.is_(None)))  # noqa: E712
+            .scalar()
+            or 0
+        ),
+        "missing_origin": (
+            db.query(func.count(Artist.id))
+            .filter(Artist.name != "Various Artists")
+            .filter(Artist.country.is_(None), Artist.origin_city.is_(None))
+            .scalar()
+            or 0
+        ),
+        "artists_missing_image": (
+            db.query(func.count(Artist.id))
+            .filter(Artist.image_path.is_(None), Artist.image_url.is_(None))
+            .scalar()
+            or 0
+        ),
+        "albums_missing_cover": (
+            db.query(func.count(Album.id))
+            .filter(Album.cover_path.is_(None), Album.cover_url.is_(None))
+            .scalar()
+            or 0
+        ),
+        "album_queue_count": len(_album_confirmation_candidates(db, limit=500)),
+    }
+
+    return templates.TemplateResponse(
+        request,
+        "today.html",
+        {
+            "safety": {
+                "comparison_count": comparison_count,
+                "snapshot_count": snapshot_count,
+                "latest_export_name": latest_export.get("name"),
+                "latest_export_count": export_count,
+                "export_warning": export_warning,
+            },
+            "ranking": {
+                "today_count": today_count,
+                "progress": progress_metrics(db),
+                "compared_songs": compared_songs,
+                "placement_pending": placement_pending,
+            },
+            "writing": {
+                "published_count": db.query(func.count(Note.id)).filter(Note.status == "published").scalar() or 0,
+                "draft_count": db.query(func.count(Note.id)).filter(Note.status == "draft").scalar() or 0,
+                "subscriber_count": db.query(func.count(Note.id)).filter(Note.visibility == "subscribers").scalar() or 0,
+                "why_note": why_note,
+                "review_songs": loved_songs_needing_review(db)[:5],
+                "review_albums": loved_albums_needing_review(db)[:5],
+            },
+            "cleanup": cleanup,
+            "listen_next": _listen_queue_preview(db),
         },
     )
 
@@ -1066,8 +1219,11 @@ def next_artist_prompt(exclude: str | None = None, db: Session = Depends(get_ses
     if artist is None and excluded_ids:
         artist = next((a for a in candidates if unresolved(a)), None)
     if artist is None:
-        return {"artist": None}
-    return {"artist": {"id": artist.id, "name": artist.name, "kind": artist.kind}}
+        return JSONResponse({"artist": None}, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    return JSONResponse(
+        {"artist": {"id": artist.id, "name": artist.name, "kind": artist.kind}},
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 class ArtistMetaBody(BaseModel):
@@ -1976,6 +2132,20 @@ def api_export_latest_comparisons(request: Request):
     return FileResponse(str(latest), filename=latest.name, media_type="application/json")
 
 
+@app.post("/api/safety/repair-known-artists")
+def api_repair_known_artists(request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    snapshot_path = snapshot_db("pre-known-artist-repair")
+    export_path = export_comparisons_from_db(db, "pre-known-artist-repair")
+    stats = repair_known_artist_data(db)
+    return {
+        "ok": True,
+        "snapshot_path": snapshot_path,
+        "export_path": export_path,
+        "stats": stats,
+    }
+
+
 class RestoreBackupBody(BaseModel):
     filename: str
 
@@ -2095,7 +2265,9 @@ def _album_track_rows(album: Album):
 def compare_page(request: Request):
     if not is_admin(request):
         return RedirectResponse("/login", status_code=302)
-    return templates.TemplateResponse(request, "compare.html", {})
+    response = templates.TemplateResponse(request, "compare.html", {})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.get("/api/review-prompt")

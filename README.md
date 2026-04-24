@@ -4,13 +4,18 @@ Local app that ingests an Apple Music library export and will (eventually) produ
 
 For project memory, completed feature history, current product decisions, and new-chat handoff context, start with [`PROJECT_HANDOFF.md`](PROJECT_HANDOFF.md).
 
-## Phase 1 — what works right now
+## What works right now
 
 - Parses `Library.xml` exported from the Mac Music app
 - Loads artists, albums, songs, and any playlist named `Month YYYY` (e.g. `April 2026`) into a local SQLite DB
-- Web viewer showing library stats, each monthly playlist, and a searchable song list
-
-Comparison UI, Glicko-2 ratings, and analytics come in Phase 2+.
+- Web viewer showing library stats, each monthly playlist, searchable song/album/artist pages, and detail pages
+- Pairwise comparison UI with Glicko-style ranking, queueing, undo, skip/tie, difficulty, nostalgia, anti-repeat logic, and practical ranking milestones
+- Song, album, and artist MYK scores
+- Artist/person/collab metadata, gender breakdowns, artist origin map, and discography progress
+- Listen-next queue and album confirmation queue
+- MYK Thoughts essays/reviews with drafts, multi-song targeting, Ko-fi subscriber access, comments, and moderation
+- Admin safety tools for DB snapshots, comparison exports, comparison history export, and guarded restore
+- Admin Today cockpit at `/today` for the daily work loop: protect comparisons, rank, write, clean metadata, and check listen-next
 
 ## Exporting your library on the Mac
 
@@ -71,12 +76,12 @@ Artists are now classified by `kind` (`solo` / `group` / `collab`) and decompose
 
 ## Roadmap
 
-1. **Phase 1 ✅** — Importer + schema + viewer
-2. **Phase 2** — Pairwise comparison UI + Glicko-2 + active-learning pair selection
-3. **Phase 3** — Album/artist scoring, 5-star tiers, artist gender/band prompts, unknown-album queue
-4. **Phase 4** — Analytics dashboards (genre / decade / gender / monthly-playlist quality)
-5. **Phase 5** — Mac→PC auto-sync, responsive phone-friendly UI
-6. **Phase 6** — Native phone app if needed
+1. **Protect the comparison data** — keep local, Render, snapshots, and comparison exports aligned before imports/restores/deploy-risky work.
+2. **Make the daily loop irresistible** — improve `/today` and `/compare` until ranking, cleanup, and writing each have a clear next action.
+3. **Deepen writing workflows** — support drafts, related essays, review prompts, and subscriber-facing structure without generating Mykal's prose.
+4. **Improve metadata confidence** — better manual review for MusicBrainz misses, origins, memberships, collabs, full tracklists, and art.
+5. **Tighten public storytelling** — make stats explain signal, uncertainty, listening gaps, and progress without overclaiming completeness.
+6. **Future sync/mobile** — Mac-to-PC auto-sync, responsive polish, and a native phone app only if the web app stops being enough.
 
 ## Paywall & Ko-fi
 
