@@ -1,5 +1,5 @@
 """Enrichment logic: MusicBrainz -> Artist/Album/Person DB rows + art caching."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from . import musicbrainz as mb
@@ -18,6 +18,7 @@ progress = {
 }
 
 BULK_ENRICH_BATCH_SIZE = 50
+ENRICH_RETRY_COOLDOWN_HOURS = 12
 
 
 def _parse_year(s: str | None) -> int | None:
@@ -67,6 +68,8 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
     if not mbid:
         results = mb.search_artist(artist.name)
         if not results:
+            artist.internet_synced_at = datetime.utcnow()
+            db.commit()
             return {"ok": False, "reason": "no_match"}
         mbid = results[0]["id"]
         artist.mb_id = mbid
@@ -269,10 +272,8 @@ def enrich_artist(db: Session, artist: Artist) -> dict:
         if rgid not in seen_release_groups:
             db.delete(row)
 
-    if release_total:
-        artist.internet_release_total = release_total
-    if track_total:
-        artist.internet_track_total = track_total
+    artist.internet_release_total = int(release_total)
+    artist.internet_track_total = int(track_total)
     artist.internet_synced_at = datetime.utcnow()
 
     db.commit()
@@ -371,11 +372,13 @@ def bulk_enrich(SessionFactory, batch_size: int = BULK_ENRICH_BATCH_SIZE):
     progress["error"] = None
     db = SessionFactory()
     try:
+        retry_before = datetime.utcnow() - timedelta(hours=ENRICH_RETRY_COOLDOWN_HOURS)
         all_artists = [
             artist
             for artist in db.query(Artist).filter(
-            (Artist.mb_id.is_(None)) | (Artist.internet_release_total.is_(None)) | (Artist.internet_track_total.is_(None))
-            ).all()
+                ((Artist.mb_id.is_(None)) | (Artist.internet_release_total.is_(None)) | (Artist.internet_track_total.is_(None)))
+                & ((Artist.internet_synced_at.is_(None)) | (Artist.internet_synced_at < retry_before))
+            ).order_by(Artist.internet_synced_at.asc().nullsfirst(), Artist.id.asc()).all()
             if not is_various_artists_name(artist.name)
         ]
         all_albums = [
@@ -395,10 +398,18 @@ def bulk_enrich(SessionFactory, batch_size: int = BULK_ENRICH_BATCH_SIZE):
             progress["current"] = f"Artist: {a.name}"
             print(f"[enrich] {progress['current']} ({progress['done']}/{progress['total']})")
             try:
-                enrich_artist(db, a)
+                result = enrich_artist(db, a)
+                if not result.get("ok"):
+                    a.internet_synced_at = datetime.utcnow()
+                    db.commit()
             except Exception as e:
                 print(f"[enrich] artist {a.name} failed: {e}")
                 db.rollback()
+                try:
+                    a.internet_synced_at = datetime.utcnow()
+                    db.commit()
+                except Exception:
+                    db.rollback()
             progress["done"] += 1
         for al in albums:
             progress["current"] = f"Album: {al.title}"
