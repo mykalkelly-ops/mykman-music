@@ -3,6 +3,140 @@
 {% block content %}
 <h1>Today</h1>
 
+<style>
+  .cockpit-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 0.8rem;
+    margin-bottom: 1.25rem;
+  }
+  .action-card {
+    background: rgba(255,255,255,0.9);
+    border: 2px solid var(--void);
+    border-radius: 18px;
+    padding: 0.9rem;
+    box-shadow: 4px 4px 0 rgba(143,217,255,0.55);
+    min-height: 145px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+  .action-kicker {
+    color: var(--text-dim);
+    font-size: 0.76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .action-title {
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+  .action-note {
+    color: var(--text-dim);
+    font-size: 0.86rem;
+    line-height: 1.35;
+    flex: 1;
+  }
+  .action-row {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 0.65rem;
+  }
+  .secondary-btn {
+    background: white;
+    color: var(--text);
+  }
+  .inline-next {
+    background: rgba(255,255,255,0.78);
+    border: 2px dashed var(--pink);
+    border-radius: 16px;
+    padding: 0.85rem;
+    margin-top: 1rem;
+  }
+</style>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Action cockpit</h2>
+  <div class="cockpit-grid">
+    <div class="action-card">
+      <div class="action-kicker">Review prompt</div>
+      {% if next_actions.review %}
+        <div class="action-title">{{ next_actions.review.label }}</div>
+        <div class="action-note">Next loved {{ next_actions.review.kind }} without a MYK Thought.</div>
+        <div><a href="{{ next_actions.review.href }}"><button type="button">Draft review</button></a></div>
+      {% else %}
+        <div class="action-title">No review prompt ready</div>
+        <div class="action-note">More confident comparisons will wake this up.</div>
+        <div><a href="/compare"><button type="button">Rank songs</button></a></div>
+      {% endif %}
+    </div>
+
+    <div class="action-card">
+      <div class="action-kicker">Artist fix</div>
+      {% if next_actions.artist %}
+        <div class="action-title">{{ next_actions.artist.label }}</div>
+        <div class="action-note">{{ next_actions.artist.reason }}.</div>
+        <div><a href="{{ next_actions.artist.href }}"><button type="button">Fix artist</button></a></div>
+      {% else %}
+        <div class="action-title">Artist queue is clear</div>
+        <div class="action-note">No unresolved artist prompt is waiting.</div>
+        <div><a href="/artists"><button type="button">Open artists</button></a></div>
+      {% endif %}
+    </div>
+
+    <div class="action-card">
+      <div class="action-kicker">Album confirm</div>
+      {% if next_actions.album %}
+        <div class="action-title">{{ next_actions.album.label }}{% if next_actions.album.artist %} - {{ next_actions.album.artist }}{% endif %}</div>
+        <div class="action-note">{{ next_actions.album.year or "Unknown year" }} &middot; {{ next_actions.album.song_count }} imported tracks.</div>
+        <div class="action-row">
+          <button type="button" onclick="confirmAlbumToday({{ next_actions.album.id }}, true)">Listened</button>
+          <button type="button" class="secondary-btn" onclick="confirmAlbumToday({{ next_actions.album.id }}, false)">Didn't listen</button>
+          <a href="{{ next_actions.album.href }}">Open</a>
+        </div>
+      {% else %}
+        <div class="action-title">Album queue is clear</div>
+        <div class="action-note">No imported discography gaps need a listened/not-listened call.</div>
+        <div><a href="/album-queue"><button type="button">Open queue</button></a></div>
+      {% endif %}
+    </div>
+
+    <div class="action-card">
+      <div class="action-kicker">Listen next</div>
+      {% if next_actions.listen %}
+        <div class="action-title">{{ next_actions.listen.label }}</div>
+        <div class="action-note">{{ next_actions.listen.subtitle or next_actions.listen.note or "Queued for focused listening." }}</div>
+        <div class="action-row">
+          <a href="{{ next_actions.listen.href }}"><button type="button">Open</button></a>
+          <button type="button" class="secondary-btn" onclick="finishListenNextToday({{ next_actions.listen.id }})">Done</button>
+        </div>
+      {% else %}
+        <div class="action-title">Nothing queued</div>
+        <div class="action-note">Add an album or artist from its page when curiosity taps you on the shoulder.</div>
+        <div><a href="/listen-next"><button type="button">Open queue</button></a></div>
+      {% endif %}
+    </div>
+
+    <div class="action-card">
+      <div class="action-kicker">Safety/export</div>
+      <div class="action-title">{{ next_actions.safety.label }}</div>
+      <div class="action-note">{{ next_actions.safety.note }}</div>
+      <div>
+        {% if next_actions.safety.kind == "export" %}
+          <button type="button" onclick="exportToday()">Export comparisons</button>
+        {% else %}
+          <button type="button" onclick="snapshotToday()">Snapshot DB</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="panel">
   <h2 style="margin-top:0;">Protect the comparisons</h2>
   <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:stretch;">
@@ -35,7 +169,10 @@
     {{ ranking.progress.completed }} / {{ ranking.progress.first_canon_target }} comparisons toward the first stable canon.
     Public pages should talk about meaningful signal, not impossible full pairwise completion.
   </p>
-  <a href="/compare"><button type="button">Start 25-minute ranking ritual</button></a>
+  <div class="action-row">
+    <a href="/compare"><button type="button">Start 25-minute ranking ritual</button></a>
+    <span style="color:#7a5a88;">Next click opens the comparison pair picker.</span>
+  </div>
 </section>
 
 <section class="panel">
@@ -54,6 +191,13 @@
     {% endif %}
   </p>
   {% if writing.review_songs or writing.review_albums %}
+    {% if next_actions.review %}
+      <div class="inline-next">
+        <strong>Next review:</strong>
+        <a href="{{ next_actions.review.href }}">{{ next_actions.review.label }}</a>
+        <div class="action-row"><a href="{{ next_actions.review.href }}"><button type="button">Draft this next</button></a></div>
+      </div>
+    {% endif %}
     <table>
       <thead><tr><th>Review prompt</th><th>Type</th><th>Score</th></tr></thead>
       <tbody>
@@ -79,12 +223,36 @@
     <a class="stat" href="/albums"><div class="num">{{ cleanup.albums_missing_cover }}</div><div class="label">Albums Missing Cover</div></a>
     <a class="stat" href="/album-queue"><div class="num">{{ cleanup.album_queue_count }}</div><div class="label">Albums To Confirm</div></a>
   </div>
+  {% if next_actions.artist or next_actions.album %}
+    <div class="inline-next">
+      {% if next_actions.artist %}
+        <div><strong>Next artist fix:</strong> <a href="{{ next_actions.artist.href }}">{{ next_actions.artist.label }}</a> &middot; {{ next_actions.artist.reason }}</div>
+      {% endif %}
+      {% if next_actions.album %}
+        <div style="margin-top:0.35rem;"><strong>Next album confirm:</strong> <a href="{{ next_actions.album.href }}">{{ next_actions.album.label }}</a>{% if next_actions.album.artist %} - {{ next_actions.album.artist }}{% endif %}</div>
+        <div class="action-row">
+          <button type="button" onclick="confirmAlbumToday({{ next_actions.album.id }}, true)">Listened</button>
+          <button type="button" class="secondary-btn" onclick="confirmAlbumToday({{ next_actions.album.id }}, false)">Didn't listen</button>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
   <p style="color:#7a5a88; margin-bottom:0;">Manual corrections matter because MusicBrainz is useful, weird, and occasionally confidently wrong.</p>
 </section>
 
 <section class="panel">
   <h2 style="margin-top:0;">Listen next</h2>
   {% if listen_next %}
+    {% if next_actions.listen %}
+      <div class="inline-next">
+        <strong>Next listen:</strong> <a href="{{ next_actions.listen.href }}">{{ next_actions.listen.label }}</a>
+        {% if next_actions.listen.subtitle %}<span style="color:#7a5a88;"> - {{ next_actions.listen.subtitle }}</span>{% endif %}
+        <div class="action-row">
+          <a href="{{ next_actions.listen.href }}"><button type="button">Open this</button></a>
+          <button type="button" class="secondary-btn" onclick="finishListenNextToday({{ next_actions.listen.id }})">Mark done</button>
+        </div>
+      </div>
+    {% endif %}
     <table>
       <thead><tr><th>Target</th><th>Type</th><th>Note</th></tr></thead>
       <tbody>
@@ -114,6 +282,20 @@ async function exportToday() {
   const data = await r.json();
   if (!r.ok) { alert(data.detail || 'Comparison export failed'); return; }
   alert('Comparison export created.');
+  location.reload();
+}
+async function confirmAlbumToday(albumId, listened) {
+  const r = await fetch(`/api/albums/${albumId}/listened`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({listened}),
+  });
+  if (!r.ok) { alert('Album confirmation failed'); return; }
+  location.reload();
+}
+async function finishListenNextToday(itemId) {
+  const r = await fetch('/api/listen-next/' + itemId, {method: 'DELETE'});
+  if (!r.ok) { alert('Could not remove listen-next item'); return; }
   location.reload();
 }
 </script>

@@ -116,7 +116,13 @@ async function pollEnrich() {
     const s = await r.json();
     if (s.running || s.done > 0) {
       const tail = s.remaining ? ` (${s.remaining} still queued after this batch)` : '';
-      el.textContent = `${s.done} / ${s.total} - ${s.current || ''}${tail}`;
+      const parts = [];
+      if (s.artists_done) parts.push(`${s.artists_done} artists`);
+      if (s.albums_done) parts.push(`${s.albums_done} albums`);
+      if (s.no_match) parts.push(`${s.no_match} no match`);
+      if (s.failed) parts.push(`${s.failed} failed`);
+      const summary = parts.length ? ` - ${parts.join(' · ')}` : '';
+      el.textContent = `${s.done} / ${s.total} - ${s.current || ''}${summary}${tail}`;
     }
     if (s.running) setTimeout(pollEnrich, 2000);
     else document.getElementById('enrich-btn').disabled = false;

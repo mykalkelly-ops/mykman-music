@@ -565,6 +565,60 @@ def _listen_queue_preview(db: Session, limit: int = 5) -> list[dict]:
     return items
 
 
+def _next_unresolved_artist(db: Session) -> dict | None:
+    artist = (
+        db.query(Artist)
+        .join(Album, Album.artist_id == Artist.id)
+        .join(Song, Song.album_id == Album.id)
+        .join(PlaylistSong, PlaylistSong.song_id == Song.id)
+        .filter(func.lower(Artist.name) != "various artists")
+        .filter((Artist.prompt_resolved.is_(None)) | (Artist.prompt_resolved != True))  # noqa: E712
+        .order_by(Artist.name.asc())
+        .first()
+    )
+    if artist is None:
+        return None
+    reason = "Resolve act type, members, or gender metadata"
+    if artist.kind is None:
+        reason = "Set act type"
+    elif artist.kind == "solo" and (artist.gender is None or artist.gender == "Unknown"):
+        reason = "Set solo artist gender"
+    elif artist.kind in ("group", "collab"):
+        reason = "Add members or child acts"
+    return {
+        "id": artist.id,
+        "label": artist.name,
+        "href": f"/artists/{artist.id}",
+        "reason": reason,
+    }
+
+
+def _next_album_confirmation(db: Session) -> dict | None:
+    albums = _album_confirmation_candidates(db, limit=1)
+    if not albums:
+        return None
+    album = albums[0]
+    return {
+        "id": album.id,
+        "label": album.title,
+        "artist": album.artist.name if album.artist else "",
+        "year": album.year,
+        "song_count": len(album.songs),
+        "href": f"/albums/{album.id}",
+    }
+
+
+def _review_action_from_candidate(candidate: dict | None) -> dict | None:
+    if candidate is None:
+        return None
+    return {
+        "kind": candidate["kind"],
+        "id": candidate["id"],
+        "label": candidate["label"],
+        "href": f"/notes/new?target_type={candidate['kind']}&target_id={candidate['id']}",
+    }
+
+
 @app.get("/today", response_class=HTMLResponse)
 def today_page(request: Request, db: Session = Depends(get_session)):
     if not is_admin(request):
@@ -629,6 +683,21 @@ def today_page(request: Request, db: Session = Depends(get_session)):
         ),
         "album_queue_count": len(_album_confirmation_candidates(db, limit=500)),
     }
+    listen_next = _listen_queue_preview(db)
+    safety_action = {
+        "kind": "export" if export_warning else "snapshot",
+        "label": "Export comparisons now" if export_warning else "Snapshot DB before edits",
+        "note": export_warning or "Comparison export matches the DB; take a fresh DB snapshot before deeper cleanup.",
+    }
+    review_prompt = any_review_candidate(db)
+    next_album = _next_album_confirmation(db)
+    next_actions = {
+        "review": _review_action_from_candidate(review_prompt),
+        "artist": _next_unresolved_artist(db),
+        "album": next_album,
+        "listen": listen_next[0] if listen_next else None,
+        "safety": safety_action,
+    }
 
     return templates.TemplateResponse(
         request,
@@ -656,7 +725,8 @@ def today_page(request: Request, db: Session = Depends(get_session)):
                 "review_albums": loved_albums_needing_review(db)[:5],
             },
             "cleanup": cleanup,
-            "listen_next": _listen_queue_preview(db),
+            "listen_next": listen_next,
+            "next_actions": next_actions,
         },
     )
 

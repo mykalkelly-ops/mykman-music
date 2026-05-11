@@ -15,6 +15,11 @@ progress = {
     "remaining": 0,
     "current": "",
     "error": None,
+    "artists_done": 0,
+    "albums_done": 0,
+    "no_match": 0,
+    "failed": 0,
+    "last_run_at": None,
 }
 
 BULK_ENRICH_BATCH_SIZE = 50
@@ -370,6 +375,11 @@ def bulk_enrich(SessionFactory, batch_size: int = BULK_ENRICH_BATCH_SIZE):
     progress["running"] = True
     progress["done"] = 0
     progress["error"] = None
+    progress["artists_done"] = 0
+    progress["albums_done"] = 0
+    progress["no_match"] = 0
+    progress["failed"] = 0
+    progress["last_run_at"] = datetime.utcnow().isoformat()
     db = SessionFactory()
     try:
         retry_before = datetime.utcnow() - timedelta(hours=ENRICH_RETRY_COOLDOWN_HOURS)
@@ -400,26 +410,33 @@ def bulk_enrich(SessionFactory, batch_size: int = BULK_ENRICH_BATCH_SIZE):
             try:
                 result = enrich_artist(db, a)
                 if not result.get("ok"):
+                    progress["no_match"] += 1
                     a.internet_synced_at = datetime.utcnow()
                     db.commit()
             except Exception as e:
                 print(f"[enrich] artist {a.name} failed: {e}")
                 db.rollback()
+                progress["failed"] += 1
                 try:
                     a.internet_synced_at = datetime.utcnow()
                     db.commit()
                 except Exception:
                     db.rollback()
             progress["done"] += 1
+            progress["artists_done"] += 1
         for al in albums:
             progress["current"] = f"Album: {al.title}"
             print(f"[enrich] {progress['current']} ({progress['done']}/{progress['total']})")
             try:
-                enrich_album(db, al)
+                result = enrich_album(db, al)
+                if not result.get("ok"):
+                    progress["no_match"] += 1
             except Exception as e:
                 print(f"[enrich] album {al.title} failed: {e}")
                 db.rollback()
+                progress["failed"] += 1
             progress["done"] += 1
+            progress["albums_done"] += 1
         progress["current"] = "done"
     except Exception as e:
         progress["error"] = str(e)
