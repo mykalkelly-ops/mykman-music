@@ -11,12 +11,14 @@ Philosophy:
   until the system has enough data to be confident.
 """
 import heapq
+import re
+from collections import defaultdict
 from dataclasses import dataclass
 from markupsafe import Markup
 from sqlalchemy.orm import Session
 
 from .models import Artist, Album, Song, PlaylistSong, SongCredit, ArtistMembership, Person, DEFAULT_RD
-from .canonical import canonical_key, linked_song_groups
+from .canonical import canonical_key, linked_song_groups, normalize_title
 
 UNLIKED_ANCHOR = 1200.0
 TIER_RD_THRESHOLD = 120.0
@@ -39,6 +41,15 @@ TIER_CUTOFFS = [
 VARIOUS_ARTISTS_NAMES = {
     "various artists",
 }
+ALBUM_EDITION_SUFFIX_RE = re.compile(
+    r"\s*(?:[\(\[]|[-:]\s*)"
+    r"(deluxe(?: edition| version)?|apple music edition|bonus track version|expanded edition)"
+    r"[\)\]]?\s*$",
+    re.IGNORECASE,
+)
+BRAT_DELUXE_TITLE = "brat and it's the same but there's three more songs so it's not"
+BRAT_REMIX_TITLE = "brat and it's completely different but also still brat"
+SMART_APOSTROPHE_RE = re.compile(r"[\u2018\u2019]")
 
 
 def myk_tier(rating: float, rd: float) -> int | None:
@@ -143,6 +154,21 @@ def classify_release_type(album: Album) -> str:
     return "album"
 
 
+def _album_family_title(title: str | None) -> str:
+    """Collapse edition variants while keeping remix/companion albums separate."""
+    text = normalize_title(SMART_APOSTROPHE_RE.sub("'", title or ""))
+    if text == BRAT_DELUXE_TITLE:
+        return "brat"
+    if text == BRAT_REMIX_TITLE:
+        return text
+    text = ALBUM_EDITION_SUFFIX_RE.sub("", text).strip()
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _album_family_key(album: Album) -> tuple[int, str]:
+    return (album.artist_id, _album_family_title(album.title))
+
+
 @dataclass
 class ArtistScore:
     artist_id: int
@@ -164,17 +190,53 @@ def _song_effective_rating(song: Song, is_liked: bool) -> float:
 
 
 def _album_score_row(album: Album, liked_ids: set[int]) -> AlbumScore | None:
-    if not is_rankable_album(album):
+    return _album_score_rows([album], liked_ids)
+
+
+def _album_score_rows(albums: list[Album], liked_ids: set[int]) -> AlbumScore | None:
+    albums = [album for album in albums if is_rankable_album(album)]
+    if not albums:
         return None
-    songs = album.songs
+    representative = max(
+        albums,
+        key=lambda album: (
+            effective_album_total_tracks(album) or 0,
+            len(album.songs),
+            -(album.id or 0),
+        ),
+    )
+    family_title = _album_family_title(representative.title)
+    exact_base = [
+        album for album in albums
+        if _album_family_title(album.title) == family_title
+        and normalize_title(SMART_APOSTROPHE_RE.sub("'", album.title or "")) == family_title
+    ]
+    if exact_base:
+        display_album = exact_base[0]
+    else:
+        display_album = representative
+    best_by_song: dict[tuple[str, str, int], tuple[Song, bool]] = {}
+    for album in albums:
+        for song in album.songs:
+            key = canonical_key(song)
+            is_liked = song.id in liked_ids
+            existing = best_by_song.get(key)
+            if existing is None:
+                best_by_song[key] = (song, is_liked)
+                continue
+            old_song, old_liked = existing
+            current_quality = (is_liked, song.glicko_rating, -song.glicko_rd)
+            existing_quality = (old_liked, old_song.glicko_rating, -old_song.glicko_rd)
+            if current_quality > existing_quality:
+                best_by_song[key] = (song, is_liked)
+    songs = list(best_by_song.values())
     if not songs:
         return None
     total = 0.0
     weight_sum = 0.0
     liked_count = 0
     rd_sum = 0.0
-    for song in songs:
-        is_liked = song.id in liked_ids
+    for song, is_liked in songs:
         if is_liked:
             liked_count += 1
         eff = _song_effective_rating(song, is_liked)
@@ -182,7 +244,7 @@ def _album_score_row(album: Album, liked_ids: set[int]) -> AlbumScore | None:
         total += eff * weight
         weight_sum += weight
         rd_sum += song.glicko_rd
-    displayed_total_tracks = effective_album_total_tracks(album)
+    displayed_total_tracks = max((effective_album_total_tracks(album) or 0) for album in albums) or None
     missing_track_count = max(0, (displayed_total_tracks or len(songs)) - len(songs))
     if missing_track_count:
         total += UNLIKED_ANCHOR * MISSING_ALBUM_TRACK_WEIGHT * missing_track_count
@@ -204,24 +266,27 @@ def _album_score_row(album: Album, liked_ids: set[int]) -> AlbumScore | None:
             score = 1500.0 + ((score - 1500.0) * confidence)
         score -= (1.0 - confidence) * ALBUM_LOW_COVERAGE_PENALTY
     return AlbumScore(
-        album_id=album.id,
-        artist_id=album.artist.id if album.artist else 0,
-        title=album.title,
-        artist_name=album.artist.name if album.artist else "",
+        album_id=representative.id,
+        artist_id=representative.artist.id if representative.artist else 0,
+        title=display_album.title,
+        artist_name=representative.artist.name if representative.artist else "",
         score=score,
         song_count=len(songs),
         displayed_total_tracks=displayed_total_tracks,
         liked_count=liked_count,
         avg_rd=rd_sum / (len(songs) + missing_track_count),
-        release_type=classify_release_type(album),
+        release_type=classify_release_type(representative),
     )
 
 
 def album_scores(db: Session) -> list[AlbumScore]:
     liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
     results: list[AlbumScore] = []
+    groups: dict[tuple[int, str], list[Album]] = defaultdict(list)
     for album in db.query(Album).all():
-        row = _album_score_row(album, liked_ids)
+        groups[_album_family_key(album)].append(album)
+    for albums in groups.values():
+        row = _album_score_rows(albums, liked_ids)
         if row is not None:
             results.append(row)
     results.sort(key=lambda row: row.score, reverse=True)
