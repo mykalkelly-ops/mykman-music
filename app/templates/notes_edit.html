@@ -32,21 +32,21 @@
 
 <div style="margin:1rem 0;">
   <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Visibility</label>
-  {% set vis = (note.visibility if note and note.visibility else 'public') %}
+  {% set vis = (note.visibility if note and note.visibility else initial_visibility|default('public')) %}
   <label style="margin-right:1rem;"><input type="radio" name="visibility" value="public" {% if vis == 'public' %}checked{% endif %}> public</label>
   <label><input type="radio" name="visibility" value="subscribers" {% if vis == 'subscribers' %}checked{% endif %}> subscribers only</label>
 </div>
 
 <div style="margin:1rem 0;">
   <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Status</label>
-  {% set st = (note.status if note and note.status else 'published') %}
+  {% set st = (note.status if note and note.status else initial_status|default('published')) %}
   <label style="margin-right:1rem;"><input type="radio" name="status" value="draft" {% if st == 'draft' %}checked{% endif %}> draft</label>
   <label><input type="radio" name="status" value="published" {% if st == 'published' %}checked{% endif %}> published</label>
 </div>
 
 <div style="margin:1rem 0;">
   <label style="display:block; color:#888; font-size:0.8rem; text-transform:uppercase;">Type</label>
-  {% set nk = (note.kind if note and note.kind else 'essay') %}
+  {% set nk = (note.kind if note and note.kind else initial_kind|default('essay')) %}
   <select id="kind">
     <option value="essay" {% if nk == 'essay' %}selected{% endif %}>essay</option>
     <option value="review" {% if nk == 'review' %}selected{% endif %}>review</option>

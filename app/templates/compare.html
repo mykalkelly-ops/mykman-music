@@ -2,6 +2,7 @@
 {% block content %}
 <h1>Which do you like more?</h1>
 <p id="count" style="color:#7a5a88"></p>
+<p id="save-status" style="color:#8a133d; font-weight:700;"></p>
 
 <div id="queue"></div>
 
@@ -200,14 +201,13 @@ function renderQueue() {
 async function resolve(idx, choice) {
   const pair = queue[idx];
   if (!pair || pair.resolved) return;
+  const status = document.getElementById('save-status');
+  status.textContent = '';
   let winner = null;
   if (choice === 'a') winner = pair.a.id;
   else if (choice === 'b') winner = pair.b.id;
-  pair.resolved = true;
-  saveQueue();
-  renderQueue();
   try {
-    await fetch('/api/compare', {
+    const resp = await fetch('/api/compare', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
@@ -218,8 +218,21 @@ async function resolve(idx, choice) {
         nostalgia: !!pair.nostalgiaA || !!pair.nostalgiaB
       }),
     });
+    if (!resp.ok) {
+      if (resp.status === 403) {
+        status.innerHTML = 'Admin session expired. <a href="/login">Log in</a>, then come back and pick again.';
+      } else {
+        status.textContent = 'Comparison did not save. Please try again.';
+      }
+      return;
+    }
+    pair.resolved = true;
+    saveQueue();
+    renderQueue();
     refreshCount();
-  } catch (e) {}
+  } catch (e) {
+    status.textContent = 'Comparison did not save. Check the connection and try again.';
+  }
 }
 
 async function refreshCount() {
@@ -233,6 +246,7 @@ async function refreshCount() {
 }
 
 async function loadQueue(forceNew = false) {
+  document.getElementById('save-status').textContent = '';
   if (!forceNew) {
     const saved = localStorage.getItem(STICKY_KEY);
     if (saved) {
@@ -249,7 +263,7 @@ async function loadQueue(forceNew = false) {
   const n = Number(document.getElementById('queue-size').value || 4);
   const r = await fetch('/api/next-pairs?n=' + n);
   if (!r.ok) {
-    document.getElementById('queue').innerHTML = 'No songs yet.';
+    document.getElementById('queue').innerHTML = 'Could not load comparisons. Try logging in again or refreshing.';
     return;
   }
   const data = await r.json();

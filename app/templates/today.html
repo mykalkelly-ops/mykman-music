@@ -81,7 +81,22 @@
       {% if next_actions.artist %}
         <div class="action-title">{{ next_actions.artist.label }}</div>
         <div class="action-note">{{ next_actions.artist.reason }}.</div>
-        <div><a href="{{ next_actions.artist.href }}"><button type="button">Fix artist</button></a></div>
+        <div class="action-row">
+          {% if next_actions.artist.kind == "solo" %}
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'male'})">Male</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'female'})">Female</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'nonbinary'})">Non-binary</button>
+          {% elif not next_actions.artist.kind %}
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'male'})">Solo male</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'female'})">Solo female</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'nonbinary'})">Solo non-binary</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'group'})">Mark group</button>
+            <a href="{{ next_actions.artist.href }}"><button type="button" class="secondary-btn">Detailed fix</button></a>
+          {% else %}
+            <a href="{{ next_actions.artist.href }}"><button type="button">Detailed fix</button></a>
+            <button type="button" class="secondary-btn" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'group'})">Mark group</button>
+          {% endif %}
+        </div>
       {% else %}
         <div class="action-title">Artist queue is clear</div>
         <div class="action-note">No unresolved artist prompt is waiting.</div>
@@ -227,6 +242,22 @@
     <div class="inline-next">
       {% if next_actions.artist %}
         <div><strong>Next artist fix:</strong> <a href="{{ next_actions.artist.href }}">{{ next_actions.artist.label }}</a> &middot; {{ next_actions.artist.reason }}</div>
+        <div class="action-row">
+          {% if next_actions.artist.kind == "solo" %}
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'male'})">Male</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'female'})">Female</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'nonbinary'})">Non-binary</button>
+          {% elif not next_actions.artist.kind %}
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'male'})">Solo male</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'female'})">Solo female</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'solo', gender:'nonbinary'})">Solo non-binary</button>
+            <button type="button" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'group'})">Mark group</button>
+            <a href="{{ next_actions.artist.href }}">Open detailed fix</a>
+          {% else %}
+            <a href="{{ next_actions.artist.href }}"><button type="button">Detailed fix</button></a>
+            <button type="button" class="secondary-btn" onclick="classifyArtistToday({{ next_actions.artist.id }}, {kind:'group'})">Mark group</button>
+          {% endif %}
+        </div>
       {% endif %}
       {% if next_actions.album %}
         <div style="margin-top:0.35rem;"><strong>Next album confirm:</strong> <a href="{{ next_actions.album.href }}">{{ next_actions.album.label }}</a>{% if next_actions.album.artist %} - {{ next_actions.album.artist }}{% endif %}</div>
@@ -296,6 +327,16 @@ async function confirmAlbumToday(albumId, listened) {
 async function finishListenNextToday(itemId) {
   const r = await fetch('/api/listen-next/' + itemId, {method: 'DELETE'});
   if (!r.ok) { alert('Could not remove listen-next item'); return; }
+  location.reload();
+}
+async function classifyArtistToday(artistId, payload) {
+  const r = await fetch(`/api/artists/${artistId}/quick-classify`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) { alert('Could not save artist fix'); return; }
   location.reload();
 }
 </script>

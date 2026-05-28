@@ -588,7 +588,9 @@ def _next_unresolved_artist(db: Session) -> dict | None:
     return {
         "id": artist.id,
         "label": artist.name,
-        "href": f"/artists/{artist.id}",
+        "href": f"/artists/{artist.id}#edit-act",
+        "kind": artist.kind,
+        "gender": artist.gender,
         "reason": reason,
     }
 
@@ -615,7 +617,7 @@ def _review_action_from_candidate(candidate: dict | None) -> dict | None:
         "kind": candidate["kind"],
         "id": candidate["id"],
         "label": candidate["label"],
-        "href": f"/notes/new?target_type={candidate['kind']}&target_id={candidate['id']}",
+        "href": f"/notes/new?target_type={candidate['kind']}&target_id={candidate['id']}&kind=review&status=draft",
     }
 
 
@@ -689,7 +691,15 @@ def today_page(request: Request, db: Session = Depends(get_session)):
         "label": "Export comparisons now" if export_warning else "Snapshot DB before edits",
         "note": export_warning or "Comparison export matches the DB; take a fresh DB snapshot before deeper cleanup.",
     }
-    review_prompt = any_review_candidate(db)
+    review_songs = loved_songs_needing_review(db)[:5]
+    review_albums = loved_albums_needing_review(db)[:5]
+    review_prompt = None
+    if review_songs:
+        s = review_songs[0]
+        review_prompt = {"kind": "song", "id": s["id"], "label": f'{s["title"]} - {s["artist"]}'}
+    elif review_albums:
+        a = review_albums[0]
+        review_prompt = {"kind": "album", "id": a["id"], "label": f'{a["title"]} - {a["artist"]}'}
     next_album = _next_album_confirmation(db)
     next_actions = {
         "review": _review_action_from_candidate(review_prompt),
@@ -721,8 +731,8 @@ def today_page(request: Request, db: Session = Depends(get_session)):
                 "draft_count": db.query(func.count(Note.id)).filter(Note.status == "draft").scalar() or 0,
                 "subscriber_count": db.query(func.count(Note.id)).filter(Note.visibility == "subscribers").scalar() or 0,
                 "why_note": why_note,
-                "review_songs": loved_songs_needing_review(db)[:5],
-                "review_albums": loved_albums_needing_review(db)[:5],
+                "review_songs": review_songs,
+                "review_albums": review_albums,
             },
             "cleanup": cleanup,
             "listen_next": listen_next,
@@ -1460,14 +1470,32 @@ def notes_new(
     request: Request,
     target_type: str = "general",
     target_id: int | None = None,
+    kind: str = "essay",
+    status: str = "published",
+    visibility: str = "public",
     db: Session = Depends(get_session),
 ):
     if not is_admin(request):
         return RedirectResponse("/login", status_code=302)
     target = resolve_target(db, target_type, target_id) if target_type != "general" else None
+    if kind not in ("essay", "review", "fragment", "note", "update"):
+        kind = "essay"
+    if status not in ("draft", "published"):
+        status = "published"
+    if visibility not in ("public", "subscribers"):
+        visibility = "public"
     return templates.TemplateResponse(
         request, "notes_edit.html",
-        {"note": None, "target_type": target_type, "target_id": target_id, "target": target, "related_songs": []},
+        {
+            "note": None,
+            "target_type": target_type,
+            "target_id": target_id,
+            "target": target,
+            "related_songs": [],
+            "initial_kind": kind,
+            "initial_status": status,
+            "initial_visibility": visibility,
+        },
     )
 
 
@@ -1481,7 +1509,16 @@ def notes_edit(note_id: int, request: Request, db: Session = Depends(get_session
     target = resolve_target(db, n.target_type, n.target_id)
     return templates.TemplateResponse(
         request, "notes_edit.html",
-        {"note": n, "target_type": n.target_type, "target_id": n.target_id, "target": target, "related_songs": related_songs_for_note(db, n.id)},
+        {
+            "note": n,
+            "target_type": n.target_type,
+            "target_id": n.target_id,
+            "target": target,
+            "related_songs": related_songs_for_note(db, n.id),
+            "initial_kind": n.kind,
+            "initial_status": n.status,
+            "initial_visibility": n.visibility,
+        },
     )
 
 

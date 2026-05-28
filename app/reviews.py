@@ -90,7 +90,7 @@ def loved_artists_needing_review(db: Session) -> list[dict]:
     return out
 
 
-def any_review_candidate(db: Session) -> dict | None:
+def any_review_candidate(db: Session, include_artists: bool = False) -> dict | None:
     """Return a single highest-priority review prompt for inline display."""
     songs = loved_songs_needing_review(db)
     if songs:
@@ -100,6 +100,8 @@ def any_review_candidate(db: Session) -> dict | None:
     if albums:
         a = albums[0]
         return {"kind": "album", "id": a["id"], "label": f'{a["title"]} — {a["artist"]}'}
+    if not include_artists:
+        return None
     artists = loved_artists_needing_review(db)
     if artists:
         ar = artists[0]
