@@ -29,7 +29,7 @@ PLAYLIST_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 PLAY_EVIDENCE_PLAYLIST_RE = re.compile(
-    r"\b(most\s+played|top\s+(?:songs|tracks)|replay|all[\s-]*time|past\s+(?:few\s+)?years?)\b",
+    r"\b(most\s+played|top\s+(?:songs|tracks)|replay(?:\s+(?:all\s+time|\d{4}))?|all[\s-]*time|past\s+(?:few\s+)?years?)\b",
     re.IGNORECASE,
 )
 FEAT_RE = re.compile(r"\((?:feat\.?|featuring|ft\.?)\s+([^)]+)\)", re.IGNORECASE)
@@ -148,6 +148,9 @@ def import_library(xml_path: Path) -> dict:
         "playlists": 0,
         "playlist_songs": 0,
         "skipped_playlists": 0,
+        "evidence_playlists": 0,
+        "evidence_playlist_names": [],
+        "evidence_tracks": 0,
         "backup": backup_path or "",
     }
 
@@ -162,6 +165,9 @@ def import_library(xml_path: Path) -> dict:
             is_evidence_playlist = is_play_evidence_playlist(playlist_name)
             if not is_month_playlist and not is_evidence_playlist:
                 continue
+            if is_evidence_playlist:
+                stats["evidence_playlists"] += 1
+                stats["evidence_playlist_names"].append(playlist_name)
             for item in (playlist.get("Playlist Items", []) or []):
                 track_id = item.get("Track ID")
                 if track_id is None:
@@ -178,6 +184,7 @@ def import_library(xml_path: Path) -> dict:
         track_id_to_song_pk: dict[str, int] = {}
         artist_cache: dict[str, int] = {}
         known_artist_names: set[str] = {name for (name,) in db.query(Artist.name).all()}
+        stats["evidence_tracks"] = len(evidence_track_ids)
 
         for track_id, track in tracks.items():
             play_count = _count_value(track, "Play Count")
