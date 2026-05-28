@@ -55,6 +55,54 @@ def _remove_fake_self_person(db: Session, artist: Artist) -> int:
     return removed
 
 
+def repair_artist_if_collab(
+    db: Session,
+    artist: Artist,
+    known_names: set[str] | None = None,
+    *,
+    require_known_part: bool = False,
+) -> bool:
+    known_names = known_names or {name for (name,) in db.query(Artist.name).all()}
+    parts = split_collaboration_artists(
+        artist.name,
+        known_names=known_names - {artist.name},
+        require_known_part=require_known_part,
+    )
+    if len(parts) < 2:
+        return False
+
+    children: list[Artist] = []
+    for part in parts:
+        child = _get_or_create_artist(db, part)
+        known_names.add(child.name)
+        children.append(child)
+        _ensure_child_membership(db, artist, child)
+
+    artist.kind = "collab"
+    artist.gender = "Band"
+    artist.is_band = True
+    artist.prompt_resolved = True
+    artist.internet_release_total = artist.internet_release_total or 0
+    artist.internet_track_total = artist.internet_track_total or 0
+
+    _remove_fake_self_person(db, artist)
+    for credit in db.query(SongCredit).filter(SongCredit.artist_id == artist.id).all():
+        for child in children:
+            exists = (
+                db.query(SongCredit)
+                .filter(
+                    SongCredit.song_id == credit.song_id,
+                    SongCredit.artist_id == child.id,
+                    SongCredit.role == credit.role,
+                )
+                .first()
+            )
+            if exists is None:
+                db.add(SongCredit(song_id=credit.song_id, artist_id=child.id, role=credit.role))
+        db.delete(credit)
+    return True
+
+
 def run(db: Session) -> dict[str, int]:
     known_names = {name for (name,) in db.query(Artist.name).all()}
     stats = {
@@ -70,7 +118,7 @@ def run(db: Session) -> dict[str, int]:
         parts = split_collaboration_artists(
             artist.name,
             known_names=known_names - {artist.name},
-            require_known_part=True,
+            require_known_part=False,
         )
         if len(parts) < 2:
             continue

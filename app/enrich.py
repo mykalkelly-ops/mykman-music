@@ -6,6 +6,7 @@ from . import musicbrainz as mb
 from . import art
 from .models import Artist, Album, Person, ArtistMembership, AlbumTrack, ArtistRelease
 from .scoring import effective_album_total_tracks, is_various_artists_name
+from .repair_collabs import repair_artist_if_collab
 
 # Module-level progress for the bulk background task.
 progress = {
@@ -18,6 +19,7 @@ progress = {
     "artists_done": 0,
     "albums_done": 0,
     "no_match": 0,
+    "skipped": 0,
     "failed": 0,
     "last_run_at": None,
 }
@@ -62,6 +64,17 @@ def _set_artist_origin_from_area(db: Session, artist: Artist, area: dict | None)
 
 def enrich_artist(db: Session, artist: Artist) -> dict:
     """Look up artist by name (or existing mb_id), fill metadata + members + image."""
+    if artist.kind == "collab":
+        artist.internet_release_total = artist.internet_release_total or 0
+        artist.internet_track_total = artist.internet_track_total or 0
+        artist.internet_synced_at = datetime.utcnow()
+        artist.prompt_resolved = True
+        db.commit()
+        return {"ok": False, "reason": "skip_collab"}
+    if repair_artist_if_collab(db, artist, require_known_part=False):
+        artist.internet_synced_at = datetime.utcnow()
+        db.commit()
+        return {"ok": False, "reason": "skip_collab"}
     if is_various_artists_name(artist.name):
         artist.internet_release_total = artist.internet_release_total or 0
         artist.internet_track_total = artist.internet_track_total or 0
@@ -378,6 +391,7 @@ def bulk_enrich(SessionFactory, batch_size: int = BULK_ENRICH_BATCH_SIZE):
     progress["artists_done"] = 0
     progress["albums_done"] = 0
     progress["no_match"] = 0
+    progress["skipped"] = 0
     progress["failed"] = 0
     progress["last_run_at"] = datetime.utcnow().isoformat()
     db = SessionFactory()
@@ -389,7 +403,7 @@ def bulk_enrich(SessionFactory, batch_size: int = BULK_ENRICH_BATCH_SIZE):
                 ((Artist.mb_id.is_(None)) | (Artist.internet_release_total.is_(None)) | (Artist.internet_track_total.is_(None)))
                 & ((Artist.internet_synced_at.is_(None)) | (Artist.internet_synced_at < retry_before))
             ).order_by(Artist.internet_synced_at.asc().nullsfirst(), Artist.id.asc()).all()
-            if not is_various_artists_name(artist.name)
+            if not is_various_artists_name(artist.name) and artist.kind != "collab"
         ]
         all_albums = [
             album
@@ -410,7 +424,10 @@ def bulk_enrich(SessionFactory, batch_size: int = BULK_ENRICH_BATCH_SIZE):
             try:
                 result = enrich_artist(db, a)
                 if not result.get("ok"):
-                    progress["no_match"] += 1
+                    if result.get("reason", "").startswith("skip_"):
+                        progress["skipped"] += 1
+                    else:
+                        progress["no_match"] += 1
                     a.internet_synced_at = datetime.utcnow()
                     db.commit()
             except Exception as e:

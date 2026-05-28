@@ -119,6 +119,7 @@ async function pollEnrich() {
       const parts = [];
       if (s.artists_done) parts.push(`${s.artists_done} artists`);
       if (s.albums_done) parts.push(`${s.albums_done} albums`);
+      if (s.skipped) parts.push(`${s.skipped} skipped`);
       if (s.no_match) parts.push(`${s.no_match} no match`);
       if (s.failed) parts.push(`${s.failed} failed`);
       const summary = parts.length ? ` - ${parts.join(' · ')}` : '';
