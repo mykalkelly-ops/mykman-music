@@ -16,6 +16,10 @@ SUB_COOKIE_NAME = "mykman_sub"
 PASSWORD_ENV = "MYKMAN_ADMIN_PASSWORD"
 DEFAULT_PASSWORD = "changeme"  # only used if env var not set
 
+# token -> expires_at, lets active admin requests avoid DB reads while a long
+# library import is holding SQLite's write lock.
+_VALID_ADMIN_TOKENS: dict[str, datetime] = {}
+
 def admin_password() -> str:
     raw = os.environ.get(PASSWORD_ENV, DEFAULT_PASSWORD)
     value = raw.strip()
@@ -30,9 +34,13 @@ def login(response: Response, password: str) -> bool:
         return False
     token = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + timedelta(days=30)
-    with SessionLocal() as db:
-        db.add(AdminSession(token=token, expires_at=expires_at))
-        db.commit()
+    try:
+        with SessionLocal() as db:
+            db.add(AdminSession(token=token, expires_at=expires_at))
+            db.commit()
+    except Exception:
+        return False
+    _VALID_ADMIN_TOKENS[token] = expires_at
     response.set_cookie(
         COOKIE_NAME, token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30
     )
@@ -42,11 +50,7 @@ def login(response: Response, password: str) -> bool:
 def logout(request: Request, response: Response) -> None:
     token = request.cookies.get(COOKIE_NAME)
     if token:
-        with SessionLocal() as db:
-            row = db.query(AdminSession).filter(AdminSession.token == token).first()
-            if row is not None:
-                db.delete(row)
-                db.commit()
+        _VALID_ADMIN_TOKENS.pop(token, None)
     response.delete_cookie(COOKIE_NAME)
 
 
@@ -54,8 +58,13 @@ def is_admin(request: Request) -> bool:
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         return False
+    now = datetime.utcnow()
+    cached_expiry = _VALID_ADMIN_TOKENS.get(token)
+    if cached_expiry is not None:
+        if cached_expiry >= now:
+            return True
+        _VALID_ADMIN_TOKENS.pop(token, None)
     with SessionLocal() as db:
-        now = datetime.utcnow()
         try:
             (
                 db.query(AdminSession)
@@ -65,8 +74,15 @@ def is_admin(request: Request) -> bool:
             db.commit()
         except Exception:
             db.rollback()
-        row = db.query(AdminSession).filter(AdminSession.token == token).first()
-        return bool(row and row.expires_at >= now)
+        try:
+            row = db.query(AdminSession).filter(AdminSession.token == token).first()
+        except Exception:
+            db.rollback()
+            return False
+        if row and row.expires_at >= now:
+            _VALID_ADMIN_TOKENS[token] = row.expires_at
+            return True
+        return False
 
 
 def require_admin(request: Request) -> None:

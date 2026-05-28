@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import secrets as _secrets
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -1171,7 +1172,7 @@ def _run_library_import(xml_path: Path) -> None:
 
 
 @app.post("/api/library/import")
-async def api_library_import(request: Request, background_tasks: BackgroundTasks):
+async def api_library_import(request: Request):
     require_admin(request)
     if LIBRARY_IMPORT_STATUS.get("running"):
         return JSONResponse({"ok": False, "reason": "already_running"}, status_code=409)
@@ -1203,7 +1204,7 @@ async def api_library_import(request: Request, background_tasks: BackgroundTasks
             "finished_at": None,
         }
     )
-    background_tasks.add_task(_run_library_import, target)
+    threading.Thread(target=_run_library_import, args=(target,), daemon=True).start()
     return JSONResponse({"ok": True, "bytes": total}, status_code=202)
 
 

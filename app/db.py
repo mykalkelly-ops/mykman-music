@@ -10,7 +10,7 @@ engine = create_engine(
     f"sqlite:///{DB_PATH}",
     future=True,
     poolclass=NullPool,
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False, "timeout": 60},
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
