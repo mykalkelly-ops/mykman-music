@@ -64,6 +64,16 @@ ART_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/art", StaticFiles(directory=str(ART_DIR)), name="art")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+LIBRARY_IMPORT_STATUS = {
+    "running": False,
+    "done": False,
+    "error": None,
+    "stats": None,
+    "filename": None,
+    "started_at": None,
+    "finished_at": None,
+}
+
 
 KOFI_URL = os.environ.get("KOFI_URL", "https://ko-fi.com/mykman")
 KOFI_VERIFICATION_TOKEN = os.environ.get("KOFI_VERIFICATION_TOKEN", "")
@@ -1126,6 +1136,81 @@ def listen_next_page(request: Request, db: Session = Depends(get_session)):
             }
         )
     return templates.TemplateResponse(request, "listen_next.html", {"items": items})
+
+
+@app.get("/library-import", response_class=HTMLResponse)
+def library_import_page(request: Request):
+    if not is_admin(request):
+        return RedirectResponse("/login", status_code=302)
+    return templates.TemplateResponse(request, "library_import.html", {"status": LIBRARY_IMPORT_STATUS})
+
+
+def _run_library_import(xml_path: Path) -> None:
+    from .importer import import_library
+
+    try:
+        stats = import_library(xml_path)
+        LIBRARY_IMPORT_STATUS.update(
+            {
+                "running": False,
+                "done": True,
+                "error": None,
+                "stats": stats,
+                "finished_at": datetime.utcnow().isoformat(),
+            }
+        )
+    except Exception as exc:
+        LIBRARY_IMPORT_STATUS.update(
+            {
+                "running": False,
+                "done": False,
+                "error": str(exc),
+                "finished_at": datetime.utcnow().isoformat(),
+            }
+        )
+
+
+@app.post("/api/library/import")
+async def api_library_import(request: Request, background_tasks: BackgroundTasks):
+    require_admin(request)
+    if LIBRARY_IMPORT_STATUS.get("running"):
+        return JSONResponse({"ok": False, "reason": "already_running"}, status_code=409)
+
+    target = data_dir() / "Library.xml"
+    tmp = data_dir() / "Library.xml.uploading"
+    total = 0
+    with tmp.open("wb") as handle:
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            total += len(chunk)
+            handle.write(chunk)
+    if total == 0:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise HTTPException(400, "empty upload")
+    tmp.replace(target)
+    LIBRARY_IMPORT_STATUS.update(
+        {
+            "running": True,
+            "done": False,
+            "error": None,
+            "stats": None,
+            "filename": target.name,
+            "started_at": datetime.utcnow().isoformat(),
+            "finished_at": None,
+        }
+    )
+    background_tasks.add_task(_run_library_import, target)
+    return JSONResponse({"ok": True, "bytes": total}, status_code=202)
+
+
+@app.get("/api/library/import-status")
+def api_library_import_status(request: Request):
+    require_admin(request)
+    return LIBRARY_IMPORT_STATUS
 
 
 class AlbumDecisionBody(BaseModel):

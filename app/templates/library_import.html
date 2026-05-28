@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Library Import - MYKMAN Music{% endblock %}
+{% block content %}
+<h1>Library Import</h1>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Update the live library</h2>
+  <p style="color:#7a5a88;">Upload the Apple Music <code>Library.xml</code> export. The importer will snapshot the DB and export comparisons before it changes data.</p>
+  <input id="library-file" type="file" accept=".xml,text/xml,application/xml">
+  <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:1rem;">
+    <button id="upload-library" type="button">Upload and import</button>
+    <a href="/today"><button type="button">Back to today</button></a>
+  </div>
+  <p id="library-status" style="color:#7a5a88; font-weight:700;"></p>
+  <pre id="library-result" style="display:none;"></pre>
+</section>
+
+<script>
+const statusEl = document.getElementById('library-status');
+const resultEl = document.getElementById('library-result');
+const uploadBtn = document.getElementById('upload-library');
+
+function renderStatus(status) {
+  if (!status) return;
+  if (status.running) {
+    statusEl.textContent = 'Import running. Keep this tab open if you want to watch it finish.';
+    uploadBtn.disabled = true;
+  } else if (status.error) {
+    statusEl.textContent = 'Import failed: ' + status.error;
+    uploadBtn.disabled = false;
+  } else if (status.done) {
+    statusEl.textContent = 'Import complete.';
+    uploadBtn.disabled = false;
+    resultEl.style.display = 'block';
+    resultEl.textContent = JSON.stringify(status.stats || {}, null, 2);
+  }
+}
+
+async function pollStatus() {
+  const r = await fetch('/api/library/import-status', {cache:'no-store'});
+  if (!r.ok) {
+    statusEl.textContent = 'Admin session expired. Log in again.';
+    uploadBtn.disabled = false;
+    return;
+  }
+  const status = await r.json();
+  renderStatus(status);
+  if (status.running) setTimeout(pollStatus, 2000);
+}
+
+uploadBtn.addEventListener('click', async () => {
+  const file = document.getElementById('library-file').files[0];
+  if (!file) {
+    statusEl.textContent = 'Choose Library.xml first.';
+    return;
+  }
+  if (!file.name.toLowerCase().endsWith('.xml')) {
+    statusEl.textContent = 'Choose the Apple Music Library.xml file.';
+    return;
+  }
+  uploadBtn.disabled = true;
+  resultEl.style.display = 'none';
+  statusEl.textContent = 'Uploading...';
+  const r = await fetch('/api/library/import', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {'Content-Type': 'application/xml'},
+    body: file,
+  });
+  if (!r.ok) {
+    statusEl.textContent = r.status === 403 ? 'Admin session expired. Log in again.' : 'Upload failed.';
+    uploadBtn.disabled = false;
+    return;
+  }
+  statusEl.textContent = 'Upload complete. Import starting...';
+  pollStatus();
+});
+
+pollStatus();
+</script>
+{% endblock %}
