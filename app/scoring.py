@@ -15,11 +15,15 @@ from dataclasses import dataclass
 from markupsafe import Markup
 from sqlalchemy.orm import Session
 
-from .models import Artist, Album, Song, PlaylistSong, SongCredit, ArtistMembership, Person
+from .models import Artist, Album, Song, PlaylistSong, SongCredit, ArtistMembership, Person, DEFAULT_RD
 from .canonical import canonical_key, linked_song_groups
 
 UNLIKED_ANCHOR = 1200.0
 TIER_RD_THRESHOLD = 120.0
+MISSING_ALBUM_TRACK_WEIGHT = 0.1
+ALBUM_FULL_CONFIDENCE_COVERAGE = 0.60
+ALBUM_FULL_CONFIDENCE_EVIDENCE_TRACKS = 5
+ALBUM_LOW_COVERAGE_PENALTY = 60.0
 ARTIST_FULL_CONFIDENCE_COVERAGE = 0.60
 ARTIST_LOW_COVERAGE_PENALTY = 100.0
 ARTIST_FULL_CONFIDENCE_EVIDENCE_TRACKS = 8
@@ -178,7 +182,27 @@ def _album_score_row(album: Album, liked_ids: set[int]) -> AlbumScore | None:
         total += eff * weight
         weight_sum += weight
         rd_sum += song.glicko_rd
+    displayed_total_tracks = effective_album_total_tracks(album)
+    missing_track_count = max(0, (displayed_total_tracks or len(songs)) - len(songs))
+    if missing_track_count:
+        total += UNLIKED_ANCHOR * MISSING_ALBUM_TRACK_WEIGHT * missing_track_count
+        weight_sum += MISSING_ALBUM_TRACK_WEIGHT * missing_track_count
+        rd_sum += DEFAULT_RD * missing_track_count
     score = total / weight_sum if weight_sum else 0.0
+    confidence_total = displayed_total_tracks or len(songs)
+    evidence_confidence = max(
+        0.0,
+        min(1.0, liked_count / ALBUM_FULL_CONFIDENCE_EVIDENCE_TRACKS),
+    )
+    if confidence_total:
+        coverage = max(0.0, min(1.0, liked_count / confidence_total))
+        confidence = min(
+            evidence_confidence,
+            max(0.0, min(1.0, coverage / ALBUM_FULL_CONFIDENCE_COVERAGE)),
+        )
+        if score > 1500.0:
+            score = 1500.0 + ((score - 1500.0) * confidence)
+        score -= (1.0 - confidence) * ALBUM_LOW_COVERAGE_PENALTY
     return AlbumScore(
         album_id=album.id,
         artist_id=album.artist.id if album.artist else 0,
@@ -186,9 +210,9 @@ def _album_score_row(album: Album, liked_ids: set[int]) -> AlbumScore | None:
         artist_name=album.artist.name if album.artist else "",
         score=score,
         song_count=len(songs),
-        displayed_total_tracks=effective_album_total_tracks(album),
+        displayed_total_tracks=displayed_total_tracks,
         liked_count=liked_count,
-        avg_rd=rd_sum / len(songs),
+        avg_rd=rd_sum / (len(songs) + missing_track_count),
         release_type=classify_release_type(album),
     )
 
