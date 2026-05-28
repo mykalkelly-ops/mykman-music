@@ -28,6 +28,10 @@ PLAYLIST_NAME_RE = re.compile(
     r"^(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})$",
     re.IGNORECASE,
 )
+PLAY_EVIDENCE_PLAYLIST_RE = re.compile(
+    r"\b(most\s+played|top\s+(?:songs|tracks)|replay|all[\s-]*time|past\s+(?:few\s+)?years?)\b",
+    re.IGNORECASE,
+)
 FEAT_RE = re.compile(r"\((?:feat\.?|featuring|ft\.?)\s+([^)]+)\)", re.IGNORECASE)
 
 
@@ -38,6 +42,18 @@ def parse_playlist_name(name: str):
     if not match:
         return (None, None)
     return (MONTH_MAP[match.group(1).lower()], int(match.group(2)))
+
+
+def is_play_evidence_playlist(name: str | None) -> bool:
+    return bool(PLAY_EVIDENCE_PLAYLIST_RE.search(name or ""))
+
+
+def _count_value(track: dict, key: str) -> int:
+    value = track.get(key) or 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def parse_featured_artists(title: str | None) -> list[str]:
@@ -137,17 +153,24 @@ def import_library(xml_path: Path) -> dict:
 
     try:
         wanted_track_ids: set[str] = set()
+        evidence_track_ids: set[str] = set()
         listened_album_keys: set[tuple[str, str]] = set()
 
         for playlist in playlists:
-            if parse_playlist_name(playlist.get("Name", ""))[0] is None:
+            playlist_name = playlist.get("Name", "")
+            is_month_playlist = parse_playlist_name(playlist_name)[0] is not None
+            is_evidence_playlist = is_play_evidence_playlist(playlist_name)
+            if not is_month_playlist and not is_evidence_playlist:
                 continue
             for item in (playlist.get("Playlist Items", []) or []):
                 track_id = item.get("Track ID")
                 if track_id is None:
                     continue
                 tid = str(track_id)
-                wanted_track_ids.add(tid)
+                if is_month_playlist:
+                    wanted_track_ids.add(tid)
+                if is_evidence_playlist:
+                    evidence_track_ids.add(tid)
                 track = tracks.get(tid) or tracks.get(track_id)
                 if track:
                     listened_album_keys.add(album_key(track))
@@ -157,7 +180,10 @@ def import_library(xml_path: Path) -> dict:
         known_artist_names: set[str] = {name for (name,) in db.query(Artist.name).all()}
 
         for track_id, track in tracks.items():
-            if album_key(track) not in listened_album_keys:
+            play_count = _count_value(track, "Play Count")
+            skip_count = _count_value(track, "Skip Count")
+            tid = str(track_id)
+            if album_key(track) not in listened_album_keys and tid not in evidence_track_ids:
                 continue
 
             name = track.get("Name")
@@ -194,6 +220,8 @@ def import_library(xml_path: Path) -> dict:
                     duration_ms=track.get("Total Time"),
                     apple_track_id=str(track_id),
                     liked=str(track_id) in wanted_track_ids,
+                    play_count=play_count,
+                    skip_count=skip_count,
                 )
                 db.add(song)
                 db.flush()
@@ -205,6 +233,8 @@ def import_library(xml_path: Path) -> dict:
                     song.track_number = track.get("Track Number")
                 if str(track_id) in wanted_track_ids:
                     song.liked = True
+                song.play_count = max(song.play_count or 0, play_count)
+                song.skip_count = max(song.skip_count or 0, skip_count)
 
             primary_artist_name = track.get("Artist") or artist_name
             if primary_artist_name:

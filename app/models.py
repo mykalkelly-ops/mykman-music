@@ -114,6 +114,8 @@ class Song(Base):
     track_number = Column(Integer, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     apple_track_id = Column(String, nullable=True, index=True)
+    play_count = Column(Integer, default=0, nullable=False)
+    skip_count = Column(Integer, default=0, nullable=False)
     glicko_rating = Column(Float, default=DEFAULT_RATING)
     glicko_rd = Column(Float, default=DEFAULT_RD)
     glicko_vol = Column(Float, default=DEFAULT_VOL)
@@ -262,6 +264,10 @@ def init_db(engine):
             conn.execute(text("ALTER TABLE songs ADD COLUMN liked BOOLEAN DEFAULT 0"))
         if "track_number" not in existing_cols:
             conn.execute(text("ALTER TABLE songs ADD COLUMN track_number INTEGER"))
+        if "play_count" not in existing_cols:
+            conn.execute(text("ALTER TABLE songs ADD COLUMN play_count INTEGER DEFAULT 0"))
+        if "skip_count" not in existing_cols:
+            conn.execute(text("ALTER TABLE songs ADD COLUMN skip_count INTEGER DEFAULT 0"))
         # Add artists.kind if missing
         try:
             artist_cols = {c["name"] for c in insp.get_columns("artists")}

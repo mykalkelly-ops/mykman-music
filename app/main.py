@@ -2386,6 +2386,8 @@ def _song_payload(s: Song) -> dict:
         "rating": round(s.glicko_rating, 1),
         "rd": round(s.glicko_rd, 1),
         "comparison_count": s.comparison_count,
+        "play_count": s.play_count or 0,
+        "skip_count": s.skip_count or 0,
     }
 
 

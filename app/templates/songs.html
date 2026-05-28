@@ -13,7 +13,7 @@
 </form>
 <p>Showing {{ songs_with_stars|length }} (limit {{ limit }}), sorted by current rating.</p>
 <table>
-  <thead><tr><th>#</th><th>MYKs</th><th>Title</th><th>Artist</th><th>Album</th><th>Rating</th><th>RD</th><th>Cmps</th><th>Review</th></tr></thead>
+  <thead><tr><th>#</th><th>MYKs</th><th>Title</th><th>Artist</th><th>Album</th><th>Rating</th><th>RD</th><th>Cmps</th><th>Plays</th><th>Review</th></tr></thead>
   <tbody>
     {% for s, stars in songs_with_stars %}
     <tr>
@@ -25,6 +25,7 @@
       <td>{{ "%.0f"|format(s.glicko_rating) }}</td>
       <td>{{ "%.0f"|format(s.glicko_rd) }}</td>
       <td>{{ s.comparison_count }}</td>
+      <td>{{ s.play_count or 0 }}{% if s.skip_count %} / {{ s.skip_count }} skips{% endif %}</td>
       <td>
         {% if s.id in reviewed_ids %}
           <a href="/songs/{{ s.id }}#notes" title="Read review">Read</a>

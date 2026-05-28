@@ -112,7 +112,8 @@ function difficultyControls(pair, idx) {
 }
 
 function songLine(s, idx, side, checked) {
-  const meta = `${s.album || ''}${s.year ? ' · ' + s.year : ''}${s.genre ? ' · ' + s.genre : ''} · ${s.rating} (RD ${s.rd}, ${s.comparison_count} cmps)`;
+  const playMeta = s.play_count ? ` · ${s.play_count} plays${s.skip_count ? ', ' + s.skip_count + ' skips' : ''}` : '';
+  const meta = `${s.album || ''}${s.year ? ' · ' + s.year : ''}${s.genre ? ' · ' + s.genre : ''} · ${s.rating} (RD ${s.rd}, ${s.comparison_count} cmps)${playMeta}`;
   return `
     <label style="display:flex; align-items:center; gap:0.45rem; margin-bottom:0.5rem; color:#7a5a88; font-size:0.85rem;">
       <input type="checkbox" data-nostalgia-side="${side}" data-idx="${idx}" ${checked ? 'checked' : ''}>

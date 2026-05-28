@@ -8,10 +8,12 @@ Scoring each candidate pair by information value:
   - Prefer songs with low comparison_count (give everything coverage)
 
 Strategy:
-  - 70% intra-playlist (small pools, fast convergence)
+  - 55% intra-playlist (small pools, fast convergence)
   - 20% cross-playlist bridging
+  - 15% play-evidence priority (high-play songs that still need placement)
   - 10% new-song priority (songs with very high RD / zero comparisons)
 """
+import math
 import random
 from collections import deque
 from sqlalchemy import func, or_
@@ -27,6 +29,10 @@ RECENT_SHOWN_SONG_HISTORY = 80
 RECENT_SHOWN_PAIR_HISTORY = 500
 PLACEMENT_COOLDOWN_THRESHOLD = 3
 MAX_EVER_PAIR_EXCLUSIONS = 20000
+PLAY_EVIDENCE_POOL = 150
+PLAY_EVIDENCE_MIN_PLAY_COUNT = 5
+PLAY_EVIDENCE_SETTLED_RD = 145.0
+PLAY_EVIDENCE_SETTLED_COMPARISONS = 8
 
 # Anti-repeat: track recently shown song IDs (last ~4 comparisons = 8 songs)
 _RECENT_SONG_IDS: deque[int] = deque(maxlen=RECENT_SHOWN_SONG_HISTORY)
@@ -111,6 +117,69 @@ def _score_pair(a: Song, b: Song) -> float:
     return (rd_sum / 700.0) * 0.5 + max(0.0, 1.0 - rating_diff / 400.0) * 0.3 + freshness * 0.2
 
 
+def _play_evidence_score(song: Song) -> float:
+    play_count = max(0, int(song.play_count or 0))
+    skip_count = max(0, int(song.skip_count or 0))
+    if play_count < PLAY_EVIDENCE_MIN_PLAY_COUNT:
+        return 0.0
+    uncertainty = max(0.0, min(1.0, song.glicko_rd / 350.0))
+    under_compared = 1.0 / (1.0 + max(0, song.comparison_count or 0))
+    skip_drag = min(0.25, skip_count / max(1, play_count + skip_count) * 0.25)
+    return math.log1p(play_count) * ((uncertainty * 0.6) + (under_compared * 0.4)) * (1.0 - skip_drag)
+
+
+def _pick_play_evidence_pair(
+    db: Session,
+    recent: set[int],
+    recent_pairs: set[tuple[int, int]],
+) -> tuple[Song, Song] | None:
+    candidates = (
+        db.query(Song)
+        .options(joinedload(Song.album).joinedload(Album.artist))
+        .filter(Song.play_count >= PLAY_EVIDENCE_MIN_PLAY_COUNT)
+        .order_by(Song.play_count.desc(), Song.glicko_rd.desc(), Song.comparison_count.asc())
+        .limit(PLAY_EVIDENCE_POOL)
+        .all()
+    )
+    candidates = [
+        song for song in candidates
+        if song.id not in recent
+        and (
+            song.glicko_rd > PLAY_EVIDENCE_SETTLED_RD
+            or (song.comparison_count or 0) < PLAY_EVIDENCE_SETTLED_COMPARISONS
+        )
+    ]
+    if not candidates:
+        return None
+    anchor = max(candidates, key=_play_evidence_score)
+    if _play_evidence_score(anchor) <= 0:
+        return None
+
+    opponent_pool = (
+        db.query(Song)
+        .options(joinedload(Song.album).joinedload(Album.artist))
+        .filter(Song.id != anchor.id)
+        .order_by(Song.glicko_rating.desc(), Song.play_count.desc())
+        .limit(PLAY_EVIDENCE_POOL)
+        .all()
+    )
+    opponent_pool.extend(candidates)
+    deduped: dict[int, Song] = {}
+    for song in opponent_pool:
+        if song.id == anchor.id or song.id in recent:
+            continue
+        if _pair_key(anchor.id, song.id) in recent_pairs:
+            continue
+        deduped[song.id] = song
+    if not deduped:
+        return None
+    opponent = max(
+        deduped.values(),
+        key=lambda song: _score_pair(anchor, song) + min(0.25, math.log1p(song.play_count or 0) / 20.0),
+    )
+    return (anchor, opponent)
+
+
 def _best_pair(songs: list[Song], recent_pairs: set[tuple[int, int]] | None = None) -> tuple[Song, Song] | None:
     if len(songs) < 2:
         return None
@@ -173,8 +242,14 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
 
     roll = random.random()
 
+    # 15% play evidence: high-play songs become comparison prompts, not score boosts.
+    if roll < 0.15:
+        pair = _pick_play_evidence_pair(db, recent, recent_pairs)
+        if pair:
+            return pair
+
     # 10% new / very uncertain
-    if roll < 0.10:
+    if roll < 0.25:
         candidates = (
             db.query(Song)
             .options(joinedload(Song.album).joinedload(Album.artist))
@@ -188,7 +263,7 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
             return pair
 
     # 20% cross-playlist bridging: pick two random playlists, one song each
-    if roll < 0.30:
+    if roll < 0.45:
         playlist_ids = [p.id for p in db.query(Playlist.id).all()]
         if len(playlist_ids) >= 2:
             pa, pb = random.sample(playlist_ids, 2)
@@ -211,7 +286,7 @@ def pick_pair(db: Session) -> tuple[Song, Song] | None:
                 if best:
                     return best
 
-    # 70% intra-playlist (default path)
+    # 55% intra-playlist (default path)
     playlist_ids = [p.id for p in db.query(Playlist.id).all()]
     if playlist_ids:
         for _ in range(5):
