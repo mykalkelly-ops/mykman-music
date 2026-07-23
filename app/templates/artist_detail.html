@@ -39,8 +39,19 @@
     {% if is_admin %}
       <button id="enrich-btn" style="margin-top:0.5rem;">Enrich from MusicBrainz</button>
       <button id="apple-enrich-btn" style="margin-top:0.5rem;">Enrich totals from Apple</button>
+      <button id="apple-no-match-btn" style="margin-top:0.5rem;">Mark no Apple match</button>
+      <button id="apple-clear-btn" style="margin-top:0.5rem;">Clear Apple status</button>
       <button id="artist-listen-next" style="margin-top:0.5rem;">Listen to this artist next</button>
       <span id="enrich-status" style="color:#888; font-size:0.85rem; margin-left:0.5rem;"></span>
+      <div style="margin-top:0.5rem; font-size:0.85rem; color:#7a5a88;">
+        Apple status: {{ artist.apple_catalog_status or "not checked" }}
+        {% if artist.apple_catalog_id %} · catalog id {{ artist.apple_catalog_id }}{% endif %}
+        {% if artist.internet_synced_at %} · checked{% endif %}
+      </div>
+      <div style="display:flex; gap:0.4rem; flex-wrap:wrap; align-items:center; margin-top:0.45rem;">
+        <input id="apple-catalog-id" placeholder="Apple artist ID for manual override" style="min-width:230px;">
+        <button id="apple-manual-btn" type="button">Use Apple artist ID</button>
+      </div>
     {% endif %}
   </div>
 </div>
@@ -300,6 +311,51 @@ document.getElementById('apple-enrich-btn')?.addEventListener('click', async () 
   if (status) status.textContent = `Apple totals: ${data.release_total} releases, ${data.track_total} tracks`;
   setTimeout(() => location.reload(), 800);
 });
+
+document.getElementById('apple-manual-btn')?.addEventListener('click', async () => {
+  const status = document.getElementById('enrich-status');
+  const catalogArtistId = document.getElementById('apple-catalog-id')?.value.trim();
+  if (!catalogArtistId) {
+    if (status) status.textContent = 'paste an Apple artist ID first';
+    return;
+  }
+  if (status) status.textContent = 'fetching Apple catalog artist ID...';
+  const resp = await fetch(`/api/artists/${ARTIST_ID}/apple-catalog-enrich-manual`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({catalog_artist_id: catalogArtistId}),
+  });
+  let data = null;
+  try { data = await resp.json(); } catch (e) {}
+  if (!resp.ok || !data || data.ok === false) {
+    if (status) status.textContent = (data && (data.error || data.reason)) || 'manual Apple enrich failed';
+    return;
+  }
+  if (status) status.textContent = `Manual Apple totals: ${data.release_total} releases, ${data.track_total} tracks`;
+  setTimeout(() => location.reload(), 800);
+});
+
+async function setAppleCatalogStatus(nextStatus) {
+  const status = document.getElementById('enrich-status');
+  const label = nextStatus === 'clear' ? 'clearing Apple status...' : 'marking no Apple match...';
+  if (status) status.textContent = label;
+  const resp = await fetch(`/api/artists/${ARTIST_ID}/apple-catalog-status`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: nextStatus}),
+  });
+  let data = null;
+  try { data = await resp.json(); } catch (e) {}
+  if (!resp.ok || !data || data.ok === false) {
+    if (status) status.textContent = (data && (data.detail || data.error || data.reason)) || 'Apple status update failed';
+    return;
+  }
+  if (status) status.textContent = nextStatus === 'clear' ? 'Apple status cleared' : 'Marked no Apple match';
+  setTimeout(() => location.reload(), 600);
+}
+
+document.getElementById('apple-no-match-btn')?.addEventListener('click', () => setAppleCatalogStatus('no_match'));
+document.getElementById('apple-clear-btn')?.addEventListener('click', () => setAppleCatalogStatus('clear'));
 </script>
 {% endif %}
 

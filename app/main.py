@@ -1472,6 +1472,14 @@ class AppleCatalogBatchBody(BaseModel):
     force: bool = False
 
 
+class AppleCatalogManualBody(BaseModel):
+    catalog_artist_id: str
+
+
+class AppleCatalogStatusBody(BaseModel):
+    status: str
+
+
 def _apple_track_match_key(track: AppleMusicPreviewTrack) -> tuple[str, str, str]:
     return (
         (track.name or "").strip().lower(),
@@ -1562,6 +1570,8 @@ def _apply_apple_catalog_artist_totals(db: Session, artist: Artist, catalog_arti
     artist.internet_release_total = len(countable)
     artist.internet_track_total = track_total
     artist.internet_synced_at = datetime.utcnow()
+    artist.apple_catalog_id = str(catalog_artist.get("id") or "")
+    artist.apple_catalog_status = "matched"
     db.commit()
     invalidate_artist_scores_cache()
     return {
@@ -1581,18 +1591,34 @@ def _apply_apple_catalog_artist_totals(db: Session, artist: Artist, catalog_arti
     }
 
 
-def _apple_catalog_enrich_artist(db: Session, artist: Artist, storefront: str = "us") -> dict:
+def _apple_catalog_enrich_artist(db: Session, artist: Artist, storefront: str = "us", catalog_artist_id: str | None = None) -> dict:
     if is_various_artists_name(artist.name):
         return {"ok": False, "artist_id": artist.id, "artist_name": artist.name, "reason": "skip_various_artists"}
 
-    from .apple_music import catalog_artist_albums, search_catalog_artists
+    from .apple_music import catalog_artist_albums, get_catalog_artist, search_catalog_artists
 
-    hits = search_catalog_artists(artist.name, storefront=storefront, limit=5)
-    if not hits:
+    if catalog_artist_id:
+        catalog_artist = get_catalog_artist(catalog_artist_id, storefront=storefront)
+        if not catalog_artist:
+            return {"ok": False, "artist_id": artist.id, "artist_name": artist.name, "reason": "catalog_artist_id_not_found"}
+    else:
+        hits = search_catalog_artists(artist.name, storefront=storefront, limit=5)
+        if not hits:
+            artist.internet_synced_at = datetime.utcnow()
+            artist.apple_catalog_status = "no_match"
+            db.commit()
+            invalidate_artist_scores_cache()
+            return {"ok": False, "artist_id": artist.id, "artist_name": artist.name, "reason": "no_catalog_artist_match"}
+        catalog_artist = hits[0]
+    if not catalog_artist:
         return {"ok": False, "artist_id": artist.id, "artist_name": artist.name, "reason": "no_catalog_artist_match"}
-    catalog_artist = hits[0]
     albums = catalog_artist_albums(catalog_artist["id"], storefront=storefront)
     result = _apply_apple_catalog_artist_totals(db, artist, catalog_artist, albums)
+    if catalog_artist_id:
+        artist.apple_catalog_status = "manual"
+        db.commit()
+        invalidate_artist_scores_cache()
+        result["status"] = "manual"
     return {"ok": True, "artist_id": artist.id, "artist_name": artist.name, **result}
 
 
@@ -3716,6 +3742,51 @@ def api_apple_catalog_enrich_artist(artist_id: int, request: Request, db: Sessio
             {"ok": False, "error": str(exc), "error_type": type(exc).__name__},
             status_code=500,
         )
+
+
+@app.post("/api/artists/{artist_id}/apple-catalog-enrich-manual")
+def api_apple_catalog_enrich_artist_manual(artist_id: int, body: AppleCatalogManualBody, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    artist = db.get(Artist, artist_id)
+    if artist is None:
+        raise HTTPException(404, "artist not found")
+    catalog_artist_id = (body.catalog_artist_id or "").strip()
+    if not catalog_artist_id:
+        raise HTTPException(400, "catalog_artist_id is required")
+    try:
+        return _apple_catalog_enrich_artist(db, artist, catalog_artist_id=catalog_artist_id)
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse(
+            {"ok": False, "error": str(exc), "error_type": type(exc).__name__},
+            status_code=500,
+        )
+
+
+@app.post("/api/artists/{artist_id}/apple-catalog-status")
+def api_apple_catalog_status_artist(artist_id: int, body: AppleCatalogStatusBody, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    artist = db.get(Artist, artist_id)
+    if artist is None:
+        raise HTTPException(404, "artist not found")
+    status = (body.status or "").strip()
+    if status == "no_match":
+        artist.apple_catalog_status = "no_match"
+        artist.internet_synced_at = datetime.utcnow()
+    elif status == "clear":
+        artist.apple_catalog_status = None
+        artist.apple_catalog_id = None
+        artist.internet_synced_at = None
+    else:
+        raise HTTPException(400, "status must be no_match or clear")
+    db.commit()
+    invalidate_artist_scores_cache()
+    return {
+        "ok": True,
+        "artist_id": artist.id,
+        "apple_catalog_status": artist.apple_catalog_status,
+        "internet_synced_at": artist.internet_synced_at,
+    }
 
 
 @app.post("/api/artists/apple-catalog-enrich-batch")

@@ -34,6 +34,8 @@ class Artist(Base):
     internet_release_total = Column(Integer, nullable=True)
     internet_track_total = Column(Integer, nullable=True)
     internet_synced_at = Column(DateTime, nullable=True)
+    apple_catalog_id = Column(String, nullable=True)
+    apple_catalog_status = Column(String, nullable=True)  # matched | no_match | manual | error
     albums = relationship("Album", back_populates="artist", cascade="all, delete-orphan")
     releases = relationship("ArtistRelease", back_populates="artist", cascade="all, delete-orphan")
 
@@ -287,6 +289,8 @@ def init_db(engine):
                 ("internet_release_total", "ALTER TABLE artists ADD COLUMN internet_release_total INTEGER"),
                 ("internet_track_total", "ALTER TABLE artists ADD COLUMN internet_track_total INTEGER"),
                 ("internet_synced_at", "ALTER TABLE artists ADD COLUMN internet_synced_at DATETIME"),
+                ("apple_catalog_id", "ALTER TABLE artists ADD COLUMN apple_catalog_id VARCHAR"),
+                ("apple_catalog_status", "ALTER TABLE artists ADD COLUMN apple_catalog_status VARCHAR"),
                 ("origin_city", "ALTER TABLE artists ADD COLUMN origin_city VARCHAR"),
                 ("origin_region", "ALTER TABLE artists ADD COLUMN origin_region VARCHAR"),
                 ("origin_lat", "ALTER TABLE artists ADD COLUMN origin_lat FLOAT"),

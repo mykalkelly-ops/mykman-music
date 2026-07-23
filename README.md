@@ -98,6 +98,11 @@ The `/artists` admin page can also enrich the next 10 visible artists from Apple
 in one batch. By default it skips artists already synced from Apple; use the
 refresh checkbox to re-run already-synced visible rows.
 
+If Apple cannot find an artist, open that artist page and use `Mark no Apple
+match` so the batch tool stops retrying them. If Apple has the artist under a
+different catalog ID, paste that ID into `Apple artist ID for manual override`
+and click `Use Apple artist ID`.
+
 The `/data-issues` admin page flags import artifacts and scoring data problems:
 impossible coverage counts, leading `and ...` artist names, feature-only artists
 without Apple catalog totals, suspicious featured credits, and solo-looking

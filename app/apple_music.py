@@ -120,6 +120,12 @@ def search_catalog_artists(term: str, storefront: str = "us", limit: int = 5) ->
     return ((data.get("results") or {}).get("artists") or {}).get("data") or []
 
 
+def get_catalog_artist(artist_id: str, storefront: str = "us") -> dict | None:
+    data = _apple_get(f"/v1/catalog/{storefront}/artists/{artist_id}")
+    rows = data.get("data") or []
+    return rows[0] if rows else None
+
+
 def catalog_artist_albums(artist_id: str, storefront: str = "us", limit: int = 100) -> list[dict]:
     out: list[dict] = []
     offset = 0
