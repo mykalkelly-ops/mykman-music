@@ -3,3 +3,4 @@ uvicorn
 sqlalchemy
 jinja2
 markdown
+PyJWT[crypto]

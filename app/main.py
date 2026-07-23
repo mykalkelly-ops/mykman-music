@@ -4,6 +4,7 @@ import re
 import shutil
 import secrets as _secrets
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -50,8 +51,68 @@ from .history import (
     snapshot_db,
 )
 from .paths import data_dir
+from .apple_music import get_config as get_apple_music_config, generate_developer_token
 
 app = FastAPI(title="MYKMAN Music")
+
+ARTIST_SCORES_CACHE_TTL_SECONDS = 300
+ARTIST_SCORES_CACHE: dict[str, object] = {"created_at": 0.0, "rows": None}
+ARTIST_SCORES_CACHE_LOCK = threading.Lock()
+TODAY_CACHE_TTL_SECONDS = 300
+TODAY_VALUE_CACHE: dict[str, dict[str, object]] = {
+    "review_albums": {"created_at": 0.0, "value": None},
+    "progress": {"created_at": 0.0, "value": None},
+}
+TODAY_VALUE_CACHE_LOCK = threading.Lock()
+
+
+def invalidate_artist_scores_cache() -> None:
+    with ARTIST_SCORES_CACHE_LOCK:
+        ARTIST_SCORES_CACHE["created_at"] = 0.0
+        ARTIST_SCORES_CACHE["rows"] = None
+    with TODAY_VALUE_CACHE_LOCK:
+        for row in TODAY_VALUE_CACHE.values():
+            row["created_at"] = 0.0
+            row["value"] = None
+
+
+def cached_artist_scores(db: Session, refresh: bool = False):
+    now = time.monotonic()
+    with ARTIST_SCORES_CACHE_LOCK:
+        rows = ARTIST_SCORES_CACHE.get("rows")
+        created_at = float(ARTIST_SCORES_CACHE.get("created_at") or 0.0)
+        if not refresh and rows is not None and now - created_at < ARTIST_SCORES_CACHE_TTL_SECONDS:
+            return rows
+
+    rows = artist_scores(db)
+    with ARTIST_SCORES_CACHE_LOCK:
+        ARTIST_SCORES_CACHE["created_at"] = time.monotonic()
+        ARTIST_SCORES_CACHE["rows"] = rows
+    return rows
+
+
+def _cached_today_value(key: str, compute):
+    now = time.monotonic()
+    with TODAY_VALUE_CACHE_LOCK:
+        cached = TODAY_VALUE_CACHE[key]
+        value = cached.get("value")
+        created_at = float(cached.get("created_at") or 0.0)
+        if value is not None and now - created_at < TODAY_CACHE_TTL_SECONDS:
+            return value
+
+    value = compute()
+    with TODAY_VALUE_CACHE_LOCK:
+        TODAY_VALUE_CACHE[key]["created_at"] = time.monotonic()
+        TODAY_VALUE_CACHE[key]["value"] = value
+    return value
+
+
+def cached_loved_albums_needing_review(db: Session) -> list[dict]:
+    return _cached_today_value("review_albums", lambda: loved_albums_needing_review(db))
+
+
+def cached_progress_metrics(db: Session) -> dict[str, int | float]:
+    return _cached_today_value("progress", lambda: progress_metrics(db))
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -464,11 +525,11 @@ def index(request: Request, db: Session = Depends(get_session)):
     )
 
     review_songs = loved_songs_needing_review(db) if is_admin(request) else []
-    review_albums = loved_albums_needing_review(db) if is_admin(request) else []
+    review_albums = cached_loved_albums_needing_review(db) if is_admin(request) else []
     # Artist-wide review prompts currently require a full-library scoring pass.
     # Keep them off the homepage so a normal page load stays lightweight on Render.
     review_artists = []
-    progress = progress_metrics(db)
+    progress = cached_progress_metrics(db)
     recent_query = db.query(Note)
     if not is_admin(request):
         recent_query = recent_query.filter(Note.status == "published")
@@ -632,6 +693,117 @@ def _review_action_from_candidate(candidate: dict | None) -> dict | None:
     }
 
 
+def _artist_name_in_title(artist_name: str, title: str | None) -> bool:
+    artist_key = re.sub(r"[^a-z0-9]+", " ", (artist_name or "").lower()).strip()
+    title_key = re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+    return bool(artist_key and artist_key in title_key)
+
+
+def _data_issue_report(db: Session) -> dict[str, list[dict]]:
+    artist_rows = cached_artist_scores(db)
+    impossible_counts = [
+        {
+            "artist_id": row.artist_id,
+            "name": row.name,
+            "liked_songs": row.liked_songs,
+            "total_songs": row.total_songs,
+            "listened_tracks": row.listened_tracks,
+            "known_tracks": row.known_tracks,
+        }
+        for row in artist_rows
+        if row.known_tracks is not None and row.listened_tracks > row.known_tracks
+    ]
+
+    leading_conjunction_artists = [
+        {"artist_id": artist.id, "name": artist.name}
+        for artist in db.query(Artist).filter(Artist.name.ilike("and %")).order_by(Artist.name.asc()).all()
+    ]
+
+    feature_only_no_apple = []
+    for artist in db.query(Artist).order_by(Artist.name.asc()).all():
+        if is_various_artists_name(artist.name) or artist.albums:
+            continue
+        credit_count = db.query(func.count(SongCredit.id)).filter(SongCredit.artist_id == artist.id).scalar() or 0
+        if credit_count and artist.internet_synced_at is None:
+            feature_only_no_apple.append(
+                {
+                    "artist_id": artist.id,
+                    "name": artist.name,
+                    "credit_count": credit_count,
+                }
+            )
+        if len(feature_only_no_apple) >= 75:
+            break
+
+    suspicious_feature_credits = []
+    for credit in (
+        db.query(SongCredit)
+        .join(Artist, Artist.id == SongCredit.artist_id)
+        .join(Song, Song.id == SongCredit.song_id)
+        .filter(SongCredit.role == "featured")
+        .order_by(SongCredit.id.desc())
+        .limit(1000)
+        .all()
+    ):
+        artist = db.get(Artist, credit.artist_id)
+        song = db.get(Song, credit.song_id)
+        if artist is None or song is None or _artist_name_in_title(artist.name, song.title):
+            continue
+        suspicious_feature_credits.append(
+            {
+                "credit_id": credit.id,
+                "artist_id": artist.id,
+                "artist_name": artist.name,
+                "song_id": song.id,
+                "song_title": song.title,
+                "album_title": song.album.title if song.album else "",
+                "album_artist": song.album.artist.name if song.album and song.album.artist else "",
+            }
+        )
+        if len(suspicious_feature_credits) >= 75:
+            break
+
+    solo_looking_collabs = []
+    for artist in db.query(Artist).filter(Artist.kind == "collab").order_by(Artist.name.asc()).all():
+        if re.search(r"\s(&|\+|x|and|with)\s|,", artist.name, re.IGNORECASE):
+            continue
+        child_count = (
+            db.query(func.count(ArtistMembership.id))
+            .filter(ArtistMembership.artist_id == artist.id, ArtistMembership.child_artist_id.isnot(None))
+            .scalar()
+            or 0
+        )
+        solo_looking_collabs.append(
+            {
+                "artist_id": artist.id,
+                "name": artist.name,
+                "child_count": child_count,
+            }
+        )
+        if len(solo_looking_collabs) >= 75:
+            break
+
+    return {
+        "impossible_counts": impossible_counts,
+        "leading_conjunction_artists": leading_conjunction_artists,
+        "feature_only_no_apple": feature_only_no_apple,
+        "suspicious_feature_credits": suspicious_feature_credits,
+        "solo_looking_collabs": solo_looking_collabs,
+    }
+
+
+@app.get("/data-issues", response_class=HTMLResponse)
+def data_issues_page(request: Request, refresh: int = 0, db: Session = Depends(get_session)):
+    if not is_admin(request):
+        return RedirectResponse("/login", status_code=302)
+    if refresh:
+        invalidate_artist_scores_cache()
+    report = _data_issue_report(db)
+    response = templates.TemplateResponse(request, "data_issues.html", {"report": report})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
 @app.get("/today", response_class=HTMLResponse)
 def today_page(request: Request, db: Session = Depends(get_session)):
     if not is_admin(request):
@@ -703,7 +875,7 @@ def today_page(request: Request, db: Session = Depends(get_session)):
         "note": export_warning or "Comparison export matches the DB; take a fresh DB snapshot before deeper cleanup.",
     }
     review_songs = loved_songs_needing_review(db)[:5]
-    review_albums = loved_albums_needing_review(db)[:5]
+    review_albums = cached_loved_albums_needing_review(db)[:5]
     review_prompt = None
     if review_songs:
         s = review_songs[0]
@@ -733,7 +905,7 @@ def today_page(request: Request, db: Session = Depends(get_session)):
             },
             "ranking": {
                 "today_count": today_count,
-                "progress": progress_metrics(db),
+                "progress": cached_progress_metrics(db),
                 "compared_songs": compared_songs,
                 "placement_pending": placement_pending,
             },
@@ -835,16 +1007,33 @@ def albums_page(request: Request, unknown_first: int = 0, db: Session = Depends(
 
 
 @app.get("/artists", response_class=HTMLResponse)
-def artists_page(request: Request, db: Session = Depends(get_session)):
+def artists_page(request: Request, refresh: int = 0, all: int = 0, db: Session = Depends(get_session)):
     reviewed = {
         tid for (tid,) in db.query(Note.target_id).filter(Note.target_type == "artist", Note.target_id.isnot(None)).distinct().all()
     }
     images = {aid: ip for (aid, ip) in db.query(Artist.id, Artist.image_path).filter(Artist.image_path.isnot(None)).all()}
-    return templates.TemplateResponse(
+    apple_synced = {
+        aid
+        for (aid,) in db.query(Artist.id).filter(Artist.internet_synced_at.isnot(None)).all()
+    }
+    rows = cached_artist_scores(db, refresh=bool(refresh))
+    visible_rows = rows if all else rows[:250]
+    response = templates.TemplateResponse(
         request,
         "artists.html",
-        {"artists": artist_scores(db), "reviewed_ids": reviewed, "images": images, "myk_score": myk_score, "render_myks": render_myks},
+        {
+            "artists": visible_rows,
+            "artist_total_count": len(rows),
+            "artist_showing_all": bool(all),
+            "reviewed_ids": reviewed,
+            "images": images,
+            "apple_synced": apple_synced,
+            "myk_score": myk_score,
+            "render_myks": render_myks,
+        },
     )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.get("/api/artist-search")
@@ -1146,6 +1335,35 @@ def library_import_page(request: Request):
     return templates.TemplateResponse(request, "library_import.html", {"status": LIBRARY_IMPORT_STATUS})
 
 
+@app.get("/apple-music", response_class=HTMLResponse)
+def apple_music_page(request: Request):
+    if not is_admin(request):
+        return RedirectResponse("/login", status_code=302)
+    config = get_apple_music_config()
+    return templates.TemplateResponse(
+        request,
+        "apple_music.html",
+        {
+            "configured": config.configured,
+            "missing": config.missing,
+            "team_id_set": bool(config.team_id),
+            "key_id_set": bool(config.key_id),
+            "private_key_set": bool(config.private_key),
+        },
+    )
+
+
+@app.post("/api/apple-music/developer-token")
+def api_apple_music_developer_token(request: Request):
+    require_admin(request)
+    try:
+        origin = f"{request.url.scheme}://{request.url.netloc}"
+        token = generate_developer_token(ttl_seconds=3600, origins=[origin])
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, "token": token, "ttl_seconds": 3600, "origin": origin}
+
+
 def _run_library_import(xml_path: Path) -> None:
     from .importer import import_library
 
@@ -1228,6 +1446,416 @@ class ListenQueueBody(BaseModel):
     note: str | None = None
 
 
+class AppleMusicPreviewTrack(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    artistName: str | None = None
+    albumName: str | None = None
+    genreName: str | None = None
+    releaseDate: str | None = None
+    durationInMillis: int | None = None
+    trackNumber: int | None = None
+
+
+class AppleMusicPreviewPlaylist(BaseModel):
+    id: str
+    name: str
+    tracks: list[AppleMusicPreviewTrack] = []
+
+
+class AppleMusicPreviewBody(BaseModel):
+    playlists: list[AppleMusicPreviewPlaylist] = []
+
+
+class AppleCatalogBatchBody(BaseModel):
+    artist_ids: list[int] = []
+    force: bool = False
+
+
+def _apple_track_match_key(track: AppleMusicPreviewTrack) -> tuple[str, str, str]:
+    return (
+        (track.name or "").strip().lower(),
+        (track.albumName or "").strip().lower(),
+        (track.artistName or "").strip().lower(),
+    )
+
+
+def _apple_year(release_date: str | None) -> int | None:
+    if not release_date:
+        return None
+    try:
+        return int(str(release_date)[:4])
+    except Exception:
+        return None
+
+
+def _apple_album_family_title(title: str | None) -> str:
+    value = (title or "").lower().strip()
+    value = re.sub(r"\s*\((deluxe|expanded|bonus|remastered|anniversary|.*anniversary).*?\)\s*$", "", value)
+    value = re.sub(r"\s*-\s*(deluxe|expanded|bonus|remastered|anniversary|.*anniversary).*?$", "", value)
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _is_apple_countable_release(album: dict, artist_name: str) -> bool:
+    attrs = album.get("attributes") or {}
+    name = attrs.get("name") or ""
+    if attrs.get("isSingle"):
+        return False
+    if attrs.get("isCompilation"):
+        return False
+    if int(attrs.get("trackCount") or 0) <= 3:
+        return False
+    lowered = name.lower()
+    if " single" in lowered or lowered.endswith(" single"):
+        return False
+    if "anniversary" in lowered:
+        return False
+    album_artist = (attrs.get("artistName") or "").lower()
+    if artist_name and artist_name.lower() not in album_artist:
+        return False
+    return True
+
+
+def _apply_apple_catalog_artist_totals(db: Session, artist: Artist, catalog_artist: dict, albums: list[dict]) -> dict:
+    countable = []
+    seen_titles: set[str] = set()
+    for album in albums:
+        if not _is_apple_countable_release(album, artist.name):
+            continue
+        attrs = album.get("attributes") or {}
+        family = _apple_album_family_title(attrs.get("name"))
+        if not family or family in seen_titles:
+            continue
+        seen_titles.add(family)
+        countable.append(album)
+
+    existing_release_rows = {
+        row.release_group_mb_id: row
+        for row in db.query(ArtistRelease).filter(ArtistRelease.artist_id == artist.id).all()
+    }
+    seen_release_ids: set[str] = set()
+    track_total = 0
+    for album in countable:
+        attrs = album.get("attributes") or {}
+        release_id = f"apple:{album.get('id')}"
+        seen_release_ids.add(release_id)
+        track_count = int(attrs.get("trackCount") or 0)
+        track_total += track_count
+        release_row = existing_release_rows.get(release_id)
+        if release_row is None:
+            release_row = ArtistRelease(
+                artist_id=artist.id,
+                release_group_mb_id=release_id,
+                title=attrs.get("name") or "Untitled",
+                year=_apple_year(attrs.get("releaseDate")),
+                primary_type="album",
+                track_count=track_count,
+            )
+            db.add(release_row)
+        else:
+            release_row.title = attrs.get("name") or release_row.title
+            release_row.year = release_row.year or _apple_year(attrs.get("releaseDate"))
+            release_row.primary_type = "album"
+            release_row.track_count = track_count or release_row.track_count
+
+    artist.internet_release_total = len(countable)
+    artist.internet_track_total = track_total
+    artist.internet_synced_at = datetime.utcnow()
+    db.commit()
+    invalidate_artist_scores_cache()
+    return {
+        "catalog_artist_id": catalog_artist.get("id"),
+        "catalog_artist_name": (catalog_artist.get("attributes") or {}).get("name"),
+        "release_total": artist.internet_release_total,
+        "track_total": artist.internet_track_total,
+        "releases": [
+            {
+                "id": album.get("id"),
+                "name": (album.get("attributes") or {}).get("name"),
+                "releaseDate": (album.get("attributes") or {}).get("releaseDate"),
+                "trackCount": (album.get("attributes") or {}).get("trackCount"),
+            }
+            for album in countable
+        ],
+    }
+
+
+def _apple_catalog_enrich_artist(db: Session, artist: Artist, storefront: str = "us") -> dict:
+    if is_various_artists_name(artist.name):
+        return {"ok": False, "artist_id": artist.id, "artist_name": artist.name, "reason": "skip_various_artists"}
+
+    from .apple_music import catalog_artist_albums, search_catalog_artists
+
+    hits = search_catalog_artists(artist.name, storefront=storefront, limit=5)
+    if not hits:
+        return {"ok": False, "artist_id": artist.id, "artist_name": artist.name, "reason": "no_catalog_artist_match"}
+    catalog_artist = hits[0]
+    albums = catalog_artist_albums(catalog_artist["id"], storefront=storefront)
+    result = _apply_apple_catalog_artist_totals(db, artist, catalog_artist, albums)
+    return {"ok": True, "artist_id": artist.id, "artist_name": artist.name, **result}
+
+
+def _import_apple_music_playlists(db: Session, playlists: list[AppleMusicPreviewPlaylist]) -> dict:
+    from .importer import (
+        ensure_collab_artist,
+        ensure_song_credit,
+        get_or_create_album,
+        get_or_create_artist,
+        parse_featured_artists,
+        parse_playlist_name,
+    )
+    from .artist_names import split_collaboration_artists
+    from .dedupe import merge_case_duplicates, merge_known_artist_aliases
+    from .genres import normalize_genre
+    from .scoring import is_various_artists_name
+
+    stats = {
+        "playlists_seen": 0,
+        "playlists_created": 0,
+        "songs_created": 0,
+        "songs_updated": 0,
+        "playlist_songs_created": 0,
+        "artists_after": 0,
+        "albums_after": 0,
+    }
+    artist_cache: dict[str, int] = {}
+    known_artist_names: set[str] = {name for (name,) in db.query(Artist.name).all()}
+
+    for playlist in playlists:
+        month, year = parse_playlist_name(playlist.name)
+        if month is None:
+            continue
+        stats["playlists_seen"] += 1
+        row = db.query(Playlist).filter(Playlist.name == playlist.name).one_or_none()
+        if row is None:
+            row = Playlist(
+                name=playlist.name,
+                month=month,
+                year=year,
+                apple_library_id=playlist.id,
+            )
+            db.add(row)
+            db.flush()
+            stats["playlists_created"] += 1
+        elif not row.apple_library_id:
+            row.apple_library_id = playlist.id
+
+        seen_song_pks: set[int] = {
+            song_id for (song_id,) in db.query(PlaylistSong.song_id).filter_by(playlist_id=row.id).all()
+        }
+        for track in playlist.tracks:
+            if not track.name:
+                continue
+            artist_name = (track.artistName or "Unknown Artist").strip()
+            album_title = (track.albumName or "Unknown Album").strip()
+            cache_key = artist_name
+            if cache_key in artist_cache:
+                artist = db.get(Artist, artist_cache[cache_key])
+            else:
+                artist = get_or_create_artist(db, artist_name)
+                artist_cache[cache_key] = artist.id
+                known_artist_names.add(artist.name)
+            album = get_or_create_album(
+                db,
+                artist,
+                album_title,
+                _apple_year(track.releaseDate),
+                normalize_genre(track.genreName),
+            )
+            song = None
+            if track.id:
+                song = (
+                    db.query(Song)
+                    .filter((Song.apple_library_id == track.id) | (Song.apple_track_id == track.id))
+                    .order_by(Song.id.asc())
+                    .first()
+                )
+            if song is None:
+                song = (
+                    db.query(Song)
+                    .filter(Song.album_id == album.id, Song.title.ilike(track.name))
+                    .order_by(Song.id.asc())
+                    .first()
+                )
+            if song is None:
+                song = Song(
+                    album_id=album.id,
+                    title=track.name,
+                    track_number=track.trackNumber,
+                    duration_ms=track.durationInMillis,
+                    apple_library_id=track.id,
+                    liked=True,
+                )
+                db.add(song)
+                db.flush()
+                stats["songs_created"] += 1
+            else:
+                changed = False
+                if track.id and not song.apple_library_id:
+                    song.apple_library_id = track.id
+                    changed = True
+                if song.track_number is None and track.trackNumber is not None:
+                    song.track_number = track.trackNumber
+                    changed = True
+                if song.duration_ms is None and track.durationInMillis is not None:
+                    song.duration_ms = track.durationInMillis
+                    changed = True
+                if not song.liked:
+                    song.liked = True
+                    changed = True
+                if changed:
+                    stats["songs_updated"] += 1
+
+            primary_names = split_collaboration_artists(
+                artist_name,
+                known_names=known_artist_names,
+                require_known_part=True,
+            )
+            if len(primary_names) > 1:
+                primary_artists = []
+                for primary_name in primary_names:
+                    primary_artist = get_or_create_artist(db, primary_name)
+                    known_artist_names.add(primary_artist.name)
+                    primary_artists.append(primary_artist)
+                    ensure_song_credit(db, song, primary_artist, "primary")
+                if not is_various_artists_name(artist.name):
+                    ensure_collab_artist(db, artist, primary_artists)
+            else:
+                ensure_song_credit(db, song, artist, "primary")
+            for featured_name in parse_featured_artists(track.name):
+                feat_artist = get_or_create_artist(db, featured_name)
+                known_artist_names.add(feat_artist.name)
+                ensure_song_credit(db, song, feat_artist, "featured")
+
+            if song.id not in seen_song_pks:
+                db.add(PlaylistSong(playlist_id=row.id, song_id=song.id))
+                seen_song_pks.add(song.id)
+                stats["playlist_songs_created"] += 1
+
+    db.commit()
+    merge_case_duplicates(db)
+    merge_known_artist_aliases(db)
+    stats["artists_after"] = db.query(Artist).count()
+    stats["albums_after"] = db.query(Album).count()
+    invalidate_artist_scores_cache()
+    return stats
+
+
+@app.post("/api/apple-music/sync-preview")
+def api_apple_music_sync_preview(body: AppleMusicPreviewBody, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    month_playlists = []
+    total_tracks = 0
+    unique_apple_ids: set[str] = set()
+    unique_match_keys: set[tuple[str, str, str]] = set()
+    apple_ids = {track.id for playlist in body.playlists for track in playlist.tracks if track.id}
+    existing_by_apple_id = set()
+    if apple_ids:
+        existing_by_apple_id = {
+            value
+            for (value,) in db.query(Song.apple_track_id).filter(Song.apple_track_id.in_(apple_ids)).all()
+            if value
+        }
+
+    db_song_rows = (
+        db.query(Song.title, Album.title, Artist.name)
+        .join(Album, Song.album_id == Album.id)
+        .join(Artist, Album.artist_id == Artist.id)
+        .all()
+    )
+    db_match_keys = {
+        (
+            (title or "").strip().lower(),
+            (album_title or "").strip().lower(),
+            (artist_name or "").strip().lower(),
+        )
+        for title, album_title, artist_name in db_song_rows
+    }
+    db_playlist_counts = {
+        name: count
+        for name, count in (
+            db.query(Playlist.name, func.count(PlaylistSong.id))
+            .outerjoin(PlaylistSong, PlaylistSong.playlist_id == Playlist.id)
+            .group_by(Playlist.id)
+            .all()
+        )
+    }
+
+    for playlist in body.playlists:
+        track_count = len(playlist.tracks)
+        total_tracks += track_count
+        matched_by_apple_id = 0
+        matched_by_metadata = 0
+        missing_tracks = []
+        for track in playlist.tracks:
+            if track.id:
+                unique_apple_ids.add(track.id)
+                if track.id in existing_by_apple_id:
+                    matched_by_apple_id += 1
+            key = _apple_track_match_key(track)
+            if any(key):
+                unique_match_keys.add(key)
+                if key in db_match_keys:
+                    matched_by_metadata += 1
+            if track.id not in existing_by_apple_id and key not in db_match_keys and len(missing_tracks) < 8:
+                missing_tracks.append(
+                    {
+                        "id": track.id,
+                        "name": track.name,
+                        "artistName": track.artistName,
+                        "albumName": track.albumName,
+                    }
+                )
+        db_track_count = db_playlist_counts.get(playlist.name)
+        month_playlists.append(
+            {
+                "id": playlist.id,
+                "name": playlist.name,
+                "apple_track_count": track_count,
+                "db_track_count": db_track_count,
+                "delta": None if db_track_count is None else track_count - int(db_track_count),
+                "matched_by_apple_id": matched_by_apple_id,
+                "matched_by_metadata": matched_by_metadata,
+                "missing_sample": missing_tracks,
+            }
+        )
+
+    month_playlists.sort(key=lambda row: row["name"])
+    return {
+        "ok": True,
+        "playlist_count": len(body.playlists),
+        "total_playlist_tracks": total_tracks,
+        "unique_apple_ids": len(unique_apple_ids),
+        "unique_metadata_tracks": len(unique_match_keys),
+        "existing_by_apple_id": len(existing_by_apple_id),
+        "existing_by_metadata": len(unique_match_keys & db_match_keys),
+        "playlists": month_playlists,
+    }
+
+
+@app.post("/api/apple-music/import")
+def api_apple_music_import(body: AppleMusicPreviewBody, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    try:
+        snapshot_path = snapshot_db("pre-apple-music-sync")
+        export_path = export_comparisons_from_db(db, "pre-apple-music-sync")
+        stats = _import_apple_music_playlists(db, body.playlists)
+        return {
+            "ok": True,
+            "snapshot_path": snapshot_path,
+            "export_path": export_path,
+            "stats": stats,
+            "comparison_count": db.query(func.count(Comparison.id)).scalar() or 0,
+        }
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse(
+            {"ok": False, "error": str(exc), "error_type": type(exc).__name__},
+            status_code=500,
+        )
+
+
 @app.post("/api/albums/{album_id}/listened")
 def set_album_listened(album_id: int, body: AlbumDecisionBody, request: Request, db: Session = Depends(get_session)):
     require_admin(request)
@@ -1237,6 +1865,7 @@ def set_album_listened(album_id: int, body: AlbumDecisionBody, request: Request,
     album.confirmed_listened = bool(body.listened)
     album.excluded_from_listened = not bool(body.listened)
     db.commit()
+    invalidate_artist_scores_cache()
     return {"ok": True}
 
 
@@ -1251,6 +1880,7 @@ def set_album_meta(album_id: int, body: AlbumMetaBody, request: Request, db: Ses
         total_track_count = None
     album.total_track_count = total_track_count
     db.commit()
+    invalidate_artist_scores_cache()
     return {
         "ok": True,
         "total_track_count": effective_album_total_tracks(album),
@@ -1647,6 +2277,7 @@ def create_note(body: NoteBody, request: Request, db: Session = Depends(get_sess
             if db.get(Song, song_id) is not None:
                 db.add(NoteSong(note_id=n.id, song_id=song_id))
         db.commit()
+    invalidate_artist_scores_cache()
     return {"id": n.id}
 
 
@@ -1673,6 +2304,7 @@ def update_note(note_id: int, body: NoteBody, request: Request, db: Session = De
         if db.get(Song, song_id) is not None:
             db.add(NoteSong(note_id=n.id, song_id=song_id))
     db.commit()
+    invalidate_artist_scores_cache()
     return {"ok": True}
 
 
@@ -1684,6 +2316,7 @@ def delete_note(note_id: int, request: Request, db: Session = Depends(get_sessio
         raise HTTPException(404, "note not found")
     db.delete(n)
     db.commit()
+    invalidate_artist_scores_cache()
     return {"ok": True}
 
 
@@ -2644,6 +3277,7 @@ def submit_comparison(body: CompareBody, request: Request, db: Session = Depends
 
     # Anti-repeat tracking
     note_recent_pair(a.id, b.id)
+    invalidate_artist_scores_cache()
 
     return {
         "a": _song_payload(a),
@@ -2674,6 +3308,52 @@ def api_artist_search(q: str, db: Session = Depends(get_session)):
 @app.get("/api/comparison-count")
 def api_comparison_count(db: Session = Depends(get_session)):
     return {"count": db.query(func.count(Comparison.id)).scalar() or 0}
+
+
+@app.get("/api/apple-music/weekly-comparison-candidates")
+def api_weekly_comparison_candidates(request: Request, pairs: int = 12, db: Session = Depends(get_session)):
+    require_admin(request)
+    pairs = max(1, min(int(pairs or 12), 40))
+    selected_pairs = []
+    tracks_by_id: dict[int, dict] = {}
+    seen_ids: set[int] = set()
+    seen_pairs: set[tuple[int, int]] = set()
+    attempts = 0
+    max_attempts = max(100, pairs * 30)
+    while len(selected_pairs) < pairs and attempts < max_attempts:
+        attempts += 1
+        pair = pick_pair(db)
+        if pair is None:
+            break
+        a, b = pair
+        pair_key = tuple(sorted((a.id, b.id)))
+        if pair_key in seen_pairs:
+            continue
+        if not a.apple_library_id or not b.apple_library_id:
+            continue
+        if a.id in seen_ids or b.id in seen_ids:
+            continue
+        seen_pairs.add(pair_key)
+        seen_ids.add(a.id)
+        seen_ids.add(b.id)
+        note_recent_pair(a.id, b.id)
+        selected_pairs.append({"a": _song_payload(a), "b": _song_payload(b)})
+        for song in (a, b):
+            tracks_by_id[song.id] = {
+                "song_id": song.id,
+                "apple_library_id": song.apple_library_id,
+                "type": "library-songs",
+                "title": song.title,
+                "artist": song.album.artist.name if song.album and song.album.artist else "",
+                "album": song.album.title if song.album else "",
+            }
+    return {
+        "pairs": selected_pairs,
+        "tracks": list(tracks_by_id.values()),
+        "requested_pairs": pairs,
+        "created_pairs": len(selected_pairs),
+        "attempts": attempts,
+    }
 
 
 class CreateArtistBody(BaseModel):
@@ -3020,6 +3700,66 @@ def api_enrich_artist(artist_id: int, request: Request, db: Session = Depends(ge
     if is_various_artists_name(ar.name):
         return {"ok": False, "reason": "skip_various_artists"}
     return _enrich_artist(db, ar)
+
+
+@app.post("/api/artists/{artist_id}/apple-catalog-enrich")
+def api_apple_catalog_enrich_artist(artist_id: int, request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    artist = db.get(Artist, artist_id)
+    if artist is None:
+        raise HTTPException(404, "artist not found")
+    try:
+        return _apple_catalog_enrich_artist(db, artist)
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse(
+            {"ok": False, "error": str(exc), "error_type": type(exc).__name__},
+            status_code=500,
+        )
+
+
+@app.post("/api/artists/apple-catalog-enrich-batch")
+def api_apple_catalog_enrich_batch(body: AppleCatalogBatchBody, request: Request, limit: int = 10, db: Session = Depends(get_session)):
+    require_admin(request)
+    limit = max(1, min(25, int(limit or 10)))
+    candidates = []
+    seen_ids: set[int] = set()
+    for artist_id in body.artist_ids:
+        if artist_id in seen_ids:
+            continue
+        seen_ids.add(artist_id)
+        artist = db.get(Artist, artist_id)
+        if artist is None or is_various_artists_name(artist.name):
+            continue
+        if body.force or artist.internet_synced_at is None:
+            candidates.append(artist)
+        if len(candidates) >= limit:
+            break
+
+    results = []
+    for artist in candidates:
+        try:
+            results.append(_apple_catalog_enrich_artist(db, artist))
+        except Exception as exc:
+            db.rollback()
+            results.append(
+                {
+                    "ok": False,
+                    "artist_id": artist.id,
+                    "artist_name": artist.name,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+            )
+
+    return {
+        "ok": True,
+        "requested": limit,
+        "processed": len(results),
+        "updated": sum(1 for row in results if row.get("ok")),
+        "failed": sum(1 for row in results if not row.get("ok")),
+        "results": results,
+    }
 
 
 @app.post("/api/albums/{album_id}/enrich")

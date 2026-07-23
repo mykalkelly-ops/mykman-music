@@ -1,7 +1,7 @@
 import re
 from collections import defaultdict, deque
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from .models import Song, Album, PlaylistSong, SongLink
 
@@ -58,7 +58,12 @@ def linked_song_groups(db: Session) -> dict[int, int]:
 
 
 def unique_liked_song_count(db: Session) -> int:
-    songs = db.query(Song).join(PlaylistSong, PlaylistSong.song_id == Song.id).all()
+    songs = (
+        db.query(Song)
+        .options(joinedload(Song.album).joinedload(Album.artist))
+        .join(PlaylistSong, PlaylistSong.song_id == Song.id)
+        .all()
+    )
     groups = linked_song_groups(db)
     seen: set[tuple[str, str, int] | tuple[str, int]] = set()
     for song in songs:

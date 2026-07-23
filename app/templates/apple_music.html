@@ -1,0 +1,480 @@
+{% extends "base.html" %}
+{% block title %}Apple Music - MYKMAN Music{% endblock %}
+{% block content %}
+<h1>Apple Music</h1>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Credential status</h2>
+  <p style="color:#7a5a88;">This page is for the Apple Music API path that will eventually replace manual MacBook Library.xml updates.</p>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+    <div class="stat"><div class="num">{{ "yes" if team_id_set else "no" }}</div><div class="label">Team ID</div></div>
+    <div class="stat"><div class="num">{{ "yes" if key_id_set else "no" }}</div><div class="label">Key ID</div></div>
+    <div class="stat"><div class="num">{{ "yes" if private_key_set else "no" }}</div><div class="label">Private Key</div></div>
+  </div>
+  {% if configured %}
+    <p style="color:#2f7a4d; font-weight:700;">Apple Music developer credentials are configured.</p>
+  {% else %}
+    <p style="color:#8a133d; font-weight:700;">Missing: {{ missing|join(", ") }}</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Developer token test</h2>
+  <p style="color:#7a5a88;">This generates a one-hour developer token for the current browser origin. The token itself is hidden after the first test because the useful next step is MusicKit authorization.</p>
+  <button type="button" onclick="generateToken(true)" {% if not configured %}disabled{% endif %}>Generate developer token</button>
+  <p id="token-status" style="color:#7a5a88; font-weight:700;"></p>
+  <pre id="token-output" style="display:none; white-space:pre-wrap; word-break:break-all;"></pre>
+</section>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Authorize Apple Music</h2>
+  <p style="color:#7a5a88;">This uses MusicKit on the web to ask Apple for permission to read your Apple Music library. The playlist fetch is read-only and does not write to MYKMAN Music yet.</p>
+  <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+    <button type="button" onclick="configureMusicKit()" {% if not configured %}disabled{% endif %}>Configure MusicKit</button>
+    <button type="button" onclick="authorizeMusicKit()" {% if not configured %}disabled{% endif %}>Authorize Apple Music</button>
+    <button type="button" onclick="fetchLibraryPlaylists()" {% if not configured %}disabled{% endif %}>Fetch library playlists</button>
+    <button type="button" onclick="fetchLibraryPlaylistsDirect()" {% if not configured %}disabled{% endif %}>Direct playlist API test</button>
+    <button type="button" onclick="previewMonthPlaylistSync()" {% if not configured %}disabled{% endif %}>Preview Month playlist sync</button>
+    <button type="button" onclick="importMonthPlaylistSync()" {% if not configured %}disabled{% endif %}>Import Month playlists</button>
+    <button type="button" class="secondary-btn" onclick="unauthorizeMusicKit()" {% if not configured %}disabled{% endif %}>Sign out MusicKit</button>
+  </div>
+  <p id="music-status" style="color:#7a5a88; font-weight:700;"></p>
+  <pre id="music-output" style="display:none; white-space:pre-wrap; word-break:break-word;"></pre>
+</section>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Weekly comparison playlist</h2>
+  <p style="color:#7a5a88;">Create a private Apple Music playlist from MYKMAN's next comparison candidates. Listen through it on your phone, then come back to compare.</p>
+  <label style="color:#7a5a88;">Pairs:
+    <select id="weekly-pair-count">
+      <option>8</option>
+      <option selected>12</option>
+      <option>16</option>
+      <option>20</option>
+    </select>
+  </label>
+  <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.75rem;">
+    <button type="button" onclick="previewWeeklyComparisonPlaylist()" {% if not configured %}disabled{% endif %}>Preview weekly playlist</button>
+    <button type="button" onclick="createWeeklyComparisonPlaylist()" {% if not configured %}disabled{% endif %}>Create Apple Music playlist</button>
+  </div>
+  <p id="weekly-status" style="color:#7a5a88; font-weight:700;"></p>
+  <pre id="weekly-output" style="display:none; white-space:pre-wrap; word-break:break-word;"></pre>
+</section>
+
+<section class="panel">
+  <h2 style="margin-top:0;">Sync plan</h2>
+  <ol style="color:#7a5a88; line-height:1.6;">
+    <li>Authorize Apple Music and confirm library playlist access.</li>
+    <li>Fetch only playlists named <code>Month YYYY</code> first.</li>
+    <li>Compare Apple API playlist totals against the current <code>Library.xml</code> import.</li>
+    <li>Create a fresh comparison export and DB snapshot.</li>
+    <li>Add conservative DB writes only after the read-only diff looks right.</li>
+  </ol>
+</section>
+
+<script src="https://js-cdn.music.apple.com/musickit/v1/musickit.js"></script>
+<script>
+let developerToken = null;
+let musicConfigured = false;
+let lastMonthPlaylistPayload = null;
+let lastWeeklyPlaylistPayload = null;
+
+function setMusicStatus(message) {
+  document.getElementById('music-status').textContent = message;
+}
+
+function showMusicOutput(value) {
+  const output = document.getElementById('music-output');
+  output.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  output.style.display = 'block';
+}
+
+function setWeeklyStatus(message) {
+  document.getElementById('weekly-status').textContent = message;
+}
+
+function showWeeklyOutput(value) {
+  const output = document.getElementById('weekly-output');
+  output.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  output.style.display = 'block';
+}
+
+function responseData(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value.data)) return value.data;
+  if (value.data && Array.isArray(value.data.data)) return value.data.data;
+  if (value.response && Array.isArray(value.response.data)) return value.response.data;
+  return [];
+}
+
+function summarizePlaylists(playlists) {
+  const rows = (playlists || []).map((playlist) => ({
+    id: playlist.id,
+    type: playlist.type,
+    name: playlist.attributes && playlist.attributes.name,
+    canEdit: playlist.attributes && playlist.attributes.canEdit,
+    trackCount: playlist.attributes && playlist.attributes.trackCount !== undefined
+      ? playlist.attributes.trackCount
+      : playlist.relationships && playlist.relationships.tracks && playlist.relationships.tracks.data
+        ? playlist.relationships.tracks.data.length
+        : undefined
+  }));
+  const monthPlaylistPattern = /^(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}$/i;
+  return {
+    rows,
+    monthPlaylists: rows.filter((row) => monthPlaylistPattern.test(row.name || ''))
+  };
+}
+
+function compactTrack(track) {
+  const attrs = track.attributes || {};
+  const genreNames = attrs.genreNames || [];
+  return {
+    id: track.id || null,
+    name: attrs.name || null,
+    artistName: attrs.artistName || null,
+    albumName: attrs.albumName || null,
+    genreName: Array.isArray(genreNames) && genreNames.length ? genreNames[0] : null,
+    releaseDate: attrs.releaseDate || null,
+    durationInMillis: attrs.durationInMillis || null,
+    trackNumber: attrs.trackNumber || null
+  };
+}
+
+function compactPlaylist(playlist, tracks) {
+  const attrs = playlist.attributes || {};
+  return {
+    id: playlist.id,
+    name: attrs.name || '',
+    tracks: (tracks || []).map(compactTrack)
+  };
+}
+
+function monthPlaylistRows(playlists) {
+  return summarizePlaylists(playlists).monthPlaylists;
+}
+
+async function generateToken(showToken = false) {
+  const status = document.getElementById('token-status');
+  const output = document.getElementById('token-output');
+  status.textContent = 'Generating...';
+  output.style.display = 'none';
+  output.textContent = '';
+  const r = await fetch('/api/apple-music/developer-token', {method: 'POST'});
+  const data = await r.json();
+  if (!r.ok) {
+    status.textContent = data.error || data.detail || 'Could not generate token.';
+    return;
+  }
+  developerToken = data.token || '';
+  status.textContent = `Generated for ${data.origin || window.location.origin}. Expires in ${data.ttl_seconds || 3600} seconds.`;
+  if (showToken) {
+    output.textContent = developerToken;
+    output.style.display = 'block';
+  }
+  return developerToken;
+}
+
+async function configureMusicKit() {
+  setMusicStatus('Configuring MusicKit...');
+  const token = developerToken || await generateToken(false);
+  if (!token) {
+    setMusicStatus('Developer token was not available.');
+    return null;
+  }
+  if (!window.MusicKit) {
+    setMusicStatus('MusicKit JS did not load. Refresh the page and try again.');
+    return null;
+  }
+  MusicKit.configure({
+    developerToken: token,
+    app: {
+      name: 'MYKMAN Music',
+      build: '0.1.0'
+    },
+    storefrontId: 'us',
+    suppressErrorDialog: false
+  });
+  musicConfigured = true;
+  const music = MusicKit.getInstance();
+  setMusicStatus(`MusicKit configured. Authorization status: ${music.authorizationStatus || 'unknown'}.`);
+  return music;
+}
+
+async function authorizeMusicKit() {
+  try {
+    const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
+    if (!music) return;
+    setMusicStatus('Opening Apple Music authorization...');
+    const userToken = await music.authorize();
+    setMusicStatus('Apple Music authorized. User token received for this browser session.');
+    showMusicOutput({
+      authorized: true,
+      userTokenPresent: Boolean(userToken || music.musicUserToken),
+      storefrontId: music.storefrontId || null
+    });
+  } catch (error) {
+    setMusicStatus('Apple Music authorization failed.');
+    showMusicOutput({error: String(error && (error.message || error))});
+  }
+}
+
+async function unauthorizeMusicKit() {
+  try {
+    const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
+    if (!music) return;
+    await music.unauthorize();
+    setMusicStatus('MusicKit signed out.');
+    showMusicOutput({authorized: false});
+  } catch (error) {
+    setMusicStatus('Could not sign out MusicKit.');
+    showMusicOutput({error: String(error && (error.message || error))});
+  }
+}
+
+async function fetchLibraryPlaylists() {
+  try {
+    const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
+    if (!music) return;
+    setMusicStatus('Fetching Apple Music library playlists...');
+    const results = await music.api.library.playlists({limit: 100, offset: 0});
+    const playlists = responseData(results);
+    const {rows, monthPlaylists} = summarizePlaylists(playlists);
+    setMusicStatus(`Fetched ${rows.length} playlists through MusicKit JS. Found ${monthPlaylists.length} Month YYYY playlists in this page.`);
+    showMusicOutput({
+      responseKeys: results && typeof results === 'object' ? Object.keys(results) : [],
+      nestedDataKeys: results && results.data && typeof results.data === 'object' && !Array.isArray(results.data) ? Object.keys(results.data) : [],
+      count: rows.length,
+      monthPlaylistCount: monthPlaylists.length,
+      monthPlaylists,
+      sample: rows.slice(0, 20),
+      rawPreview: JSON.stringify(results).slice(0, 2000)
+    });
+  } catch (error) {
+    setMusicStatus('Could not fetch library playlists.');
+    showMusicOutput({error: String(error && (error.message || error))});
+  }
+}
+
+async function fetchLibraryPlaylistsDirect() {
+  try {
+    const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
+    if (!music) return;
+    if (!music.musicUserToken) {
+      setMusicStatus('Authorize Apple Music first so a music user token exists.');
+      return;
+    }
+    const token = developerToken || await generateToken(false);
+    setMusicStatus('Fetching playlists through direct Apple Music API...');
+    const response = await fetch('https://api.music.apple.com/v1/me/library/playlists?limit=100', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Music-User-Token': music.musicUserToken
+      }
+    });
+    const text = await response.text();
+    let payload = null;
+    try { payload = JSON.parse(text); } catch (e) {}
+    const playlists = responseData(payload);
+    const {rows, monthPlaylists} = summarizePlaylists(playlists);
+    setMusicStatus(`Direct API status ${response.status}. Parsed ${rows.length} playlists and ${monthPlaylists.length} Month YYYY playlists.`);
+    showMusicOutput({
+      status: response.status,
+      ok: response.ok,
+      count: rows.length,
+      monthPlaylistCount: monthPlaylists.length,
+      monthPlaylists,
+      sample: rows.slice(0, 20),
+      rawPreview: (payload ? JSON.stringify(payload) : text).slice(0, 3000)
+    });
+  } catch (error) {
+    setMusicStatus('Direct playlist API test failed.');
+    showMusicOutput({error: String(error && (error.message || error))});
+  }
+}
+
+async function fetchPlaylistTracks(music, playlistId) {
+  const response = await music.api.library.playlist(playlistId, {include: 'tracks'});
+  const data = responseData(response);
+  const playlist = data[0] || (response && response.data && response.data[0]) || response;
+  const tracksRelationship = playlist && playlist.relationships && playlist.relationships.tracks;
+  return tracksRelationship && Array.isArray(tracksRelationship.data) ? tracksRelationship.data : [];
+}
+
+async function previewMonthPlaylistSync() {
+  try {
+    const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
+    if (!music) return;
+    setMusicStatus('Fetching Month YYYY playlists...');
+    const playlistResults = await music.api.library.playlists({limit: 100, offset: 0});
+    const playlists = responseData(playlistResults);
+    const monthRows = monthPlaylistRows(playlists);
+    if (!monthRows.length) {
+      setMusicStatus('No Month YYYY playlists found.');
+      showMusicOutput({playlists: summarizePlaylists(playlists).rows.slice(0, 30)});
+      return;
+    }
+
+    const byId = new Map(playlists.map((playlist) => [playlist.id, playlist]));
+    const payload = [];
+    for (let i = 0; i < monthRows.length; i += 1) {
+      const row = monthRows[i];
+      setMusicStatus(`Fetching tracks for ${row.name} (${i + 1}/${monthRows.length})...`);
+      const playlist = byId.get(row.id);
+      const tracks = await fetchPlaylistTracks(music, row.id);
+      payload.push(compactPlaylist(playlist, tracks));
+    }
+    lastMonthPlaylistPayload = payload;
+
+    setMusicStatus('Comparing Apple Music data against MYKMAN DB...');
+    const previewResponse = await fetch('/api/apple-music/sync-preview', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({playlists: payload})
+    });
+    const preview = await previewResponse.json();
+    if (!previewResponse.ok) {
+      setMusicStatus(preview.detail || 'Sync preview failed.');
+      showMusicOutput(preview);
+      return;
+    }
+    setMusicStatus(`Previewed ${preview.playlist_count} playlists and ${preview.total_playlist_tracks} playlist tracks. No DB writes were made.`);
+    showMusicOutput(preview);
+  } catch (error) {
+    setMusicStatus('Month playlist sync preview failed.');
+    showMusicOutput({error: String(error && (error.message || error))});
+  }
+}
+
+async function previewWeeklyComparisonPlaylist() {
+  try {
+    const pairCount = Number(document.getElementById('weekly-pair-count').value || 12);
+    setWeeklyStatus('Picking comparison candidates...');
+    const response = await fetch(`/api/apple-music/weekly-comparison-candidates?pairs=${pairCount}`, {cache: 'no-store'});
+    const payload = await response.json();
+    if (!response.ok) {
+      setWeeklyStatus(payload.detail || 'Could not pick weekly comparison candidates.');
+      showWeeklyOutput(payload);
+      return null;
+    }
+    lastWeeklyPlaylistPayload = payload;
+    setWeeklyStatus(`Picked ${payload.created_pairs} pairs (${payload.tracks.length} tracks with Apple Music IDs).`);
+    showWeeklyOutput({
+      created_pairs: payload.created_pairs,
+      tracks: payload.tracks.map((track) => `${track.title} - ${track.artist}`),
+      pairs: payload.pairs.map((pair) => `${pair.a.title} vs ${pair.b.title}`)
+    });
+    return payload;
+  } catch (error) {
+    setWeeklyStatus('Weekly playlist preview failed.');
+    showWeeklyOutput({error: String(error && (error.message || error))});
+    return null;
+  }
+}
+
+function weeklyPlaylistName() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `MYKMAN Weekly Comparisons ${year}-${month}-${day}`;
+}
+
+async function createWeeklyComparisonPlaylist() {
+  try {
+    const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
+    if (!music) return;
+    if (!music.musicUserToken) {
+      setWeeklyStatus('Authorize Apple Music first.');
+      return;
+    }
+    const payload = lastWeeklyPlaylistPayload || await previewWeeklyComparisonPlaylist();
+    if (!payload || !payload.tracks || !payload.tracks.length) {
+      setWeeklyStatus('No Apple Music tracks available for playlist creation.');
+      return;
+    }
+    const token = developerToken || await generateToken(false);
+    const name = weeklyPlaylistName();
+    const body = {
+      attributes: {
+        name,
+        description: `Comparison candidates generated by MYKMAN Music. ${payload.created_pairs} pairs.`,
+        isPublic: false
+      },
+      relationships: {
+        tracks: {
+          data: payload.tracks.map((track) => ({
+            id: track.apple_library_id,
+            type: track.type || 'library-songs'
+          }))
+        }
+      }
+    };
+    setWeeklyStatus(`Creating "${name}" in Apple Music...`);
+    const response = await fetch('https://api.music.apple.com/v1/me/library/playlists', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Music-User-Token': music.musicUserToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+    const text = await response.text();
+    let result = null;
+    try { result = JSON.parse(text); } catch (e) {}
+    if (!response.ok) {
+      setWeeklyStatus(`Apple Music playlist creation failed with status ${response.status}.`);
+      showWeeklyOutput(result || text);
+      return;
+    }
+    setWeeklyStatus(`Created "${name}" with ${payload.tracks.length} tracks.`);
+    showWeeklyOutput({
+      name,
+      track_count: payload.tracks.length,
+      response: result || text
+    });
+  } catch (error) {
+    setWeeklyStatus('Weekly playlist creation failed.');
+    showWeeklyOutput({error: String(error && (error.message || error))});
+  }
+}
+
+async function importMonthPlaylistSync() {
+  try {
+    if (!lastMonthPlaylistPayload || !lastMonthPlaylistPayload.length) {
+      setMusicStatus('Run Preview Month playlist sync first.');
+      return;
+    }
+    const totalTracks = lastMonthPlaylistPayload.reduce((sum, playlist) => sum + (playlist.tracks || []).length, 0);
+    const ok = confirm(
+      `Import ${lastMonthPlaylistPayload.length} Month YYYY playlists with ${totalTracks} playlist tracks?\n\n` +
+      'This will create a DB snapshot and comparison export first. It will not delete songs or comparisons.'
+    );
+    if (!ok) return;
+    setMusicStatus('Importing Apple Music Month playlists...');
+    const response = await fetch('/api/apple-music/import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({playlists: lastMonthPlaylistPayload})
+    });
+    const text = await response.text();
+    let payload = null;
+    try { payload = JSON.parse(text); } catch (e) {
+      payload = {ok: false, error: text.slice(0, 2000)};
+    }
+    if (!response.ok) {
+      setMusicStatus(payload.detail || payload.error || 'Apple Music import failed.');
+      showMusicOutput(payload);
+      return;
+    }
+    setMusicStatus('Apple Music import complete. Safety snapshot and comparison export were created first.');
+    showMusicOutput(payload);
+  } catch (error) {
+    setMusicStatus('Apple Music import failed.');
+    showMusicOutput({error: String(error && (error.message || error))});
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Data Issues</h1>
+<p style="color:#888;">Admin checks for artist totals, credit drift, and import artifacts. These are prompts for review, not automatic truth.</p>
+<p><a href="/data-issues?refresh=1">Refresh report</a></p>
+
+<h2>Impossible Artist Counts</h2>
+{% if report.impossible_counts %}
+<table>
+  <thead><tr><th>Artist</th><th>Credited Liked Songs</th><th>Listened / Known Tracks</th></tr></thead>
+  <tbody>
+  {% for row in report.impossible_counts %}
+    <tr>
+      <td><a href="/artists/{{ row.artist_id }}">{{ row.name }}</a></td>
+      <td>{{ row.liked_songs }} / {{ row.total_songs }}</td>
+      <td>{{ row.listened_tracks }} / {{ row.known_tracks }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:#666;">None found.</p>
+{% endif %}
+
+<h2>Leading "and" Artist Names</h2>
+{% if report.leading_conjunction_artists %}
+<table>
+  <thead><tr><th>Artist</th></tr></thead>
+  <tbody>
+  {% for row in report.leading_conjunction_artists %}
+    <tr><td><a href="/artists/{{ row.artist_id }}">{{ row.name }}</a></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:#666;">None found.</p>
+{% endif %}
+
+<h2>Feature-Only Artists Without Apple Catalog Totals</h2>
+<p style="color:#888;">Often okay. Clem Creevy and Bill Cosmiq belong in this kind of bucket when Apple has no standalone catalog artist page.</p>
+{% if report.feature_only_no_apple %}
+<table>
+  <thead><tr><th>Artist</th><th>Credits</th></tr></thead>
+  <tbody>
+  {% for row in report.feature_only_no_apple %}
+    <tr>
+      <td><a href="/artists/{{ row.artist_id }}">{{ row.name }}</a></td>
+      <td>{{ row.credit_count }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:#666;">None found.</p>
+{% endif %}
+
+<h2>Suspicious Featured Credits</h2>
+<p style="color:#888;">Featured credits where the credited artist name does not appear in the song title. Some are legitimate metadata quirks, but many are old import drift.</p>
+{% if report.suspicious_feature_credits %}
+<table>
+  <thead><tr><th>Artist</th><th>Song</th><th>Album</th><th>Album Artist</th></tr></thead>
+  <tbody>
+  {% for row in report.suspicious_feature_credits %}
+    <tr>
+      <td><a href="/artists/{{ row.artist_id }}">{{ row.artist_name }}</a></td>
+      <td>{{ row.song_title }}</td>
+      <td>{{ row.album_title }}</td>
+      <td>{{ row.album_artist }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:#666;">None found.</p>
+{% endif %}
+
+<h2>Solo-Looking Collab Artists</h2>
+<p style="color:#888;">Artists marked as collab even though their name does not look like a joint artist string.</p>
+{% if report.solo_looking_collabs %}
+<table>
+  <thead><tr><th>Artist</th><th>Child acts</th></tr></thead>
+  <tbody>
+  {% for row in report.solo_looking_collabs %}
+    <tr>
+      <td><a href="/artists/{{ row.artist_id }}">{{ row.name }}</a></td>
+      <td>{{ row.child_count }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:#666;">None found.</p>
+{% endif %}
+{% endblock %}

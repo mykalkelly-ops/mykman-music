@@ -55,6 +55,56 @@ $env:MYKMAN_ADMIN_PASSWORD="your-password-here"
 
 If you do not set it, the fallback password is `changeme`.
 
+## Apple Music API setup
+
+The current import path still uses `Library.xml`, but the Apple Developer path
+is being prepared so MYKMAN Music can eventually sync Apple Music playlists
+without manual MacBook exports.
+
+After Apple Developer enrollment is approved:
+
+1. In Apple Developer, create an Apple Music / MusicKit private key.
+2. Set these environment variables locally and on Render:
+   - `APPLE_TEAM_ID`
+   - `APPLE_KEY_ID`
+   - `APPLE_PRIVATE_KEY` or `APPLE_PRIVATE_KEY_PATH`
+3. Locally, `APPLE_PRIVATE_KEY_PATH` can point to the downloaded `.p8` file.
+   On Render, use `APPLE_PRIVATE_KEY` and paste the full `.p8` contents.
+   Escaped `\n` newlines are supported for hosted env vars.
+4. Open `/apple-music` as admin and generate a test developer token.
+5. Click `Configure MusicKit`, then `Authorize Apple Music`, then `Fetch library playlists`.
+6. Click `Preview Month playlist sync` and inspect the read-only diff.
+7. If the preview looks right, click `Import Month playlists`.
+8. Use `Preview weekly playlist` / `Create Apple Music playlist` to make a
+   private Apple Music playlist from upcoming comparison candidates.
+
+The first API sync preview is read-only: fetch Apple Music playlists and compare
+them against the current `Library.xml` data before writing anything to the DB.
+The guarded import creates a DB snapshot and comparison export first, then
+upserts Month YYYY playlist songs without deleting old data or touching
+comparison history.
+
+The weekly comparison playlist feature chooses upcoming comparison pairs,
+requires songs to have Apple Music library IDs, and creates a private Apple
+Music playlist in the signed-in Apple Music account from the browser.
+
+Artist pages also have an `Enrich totals from Apple` admin button. It searches
+the Apple Music catalog for the artist, fetches catalog albums, filters obvious
+singles/compilations/anniversary duplicates, collapses deluxe duplicates, and
+updates internet release and track totals used by discography coverage. Live
+albums count.
+
+The `/artists` admin page can also enrich the next 10 visible artists from Apple
+in one batch. By default it skips artists already synced from Apple; use the
+refresh checkbox to re-run already-synced visible rows.
+
+The `/data-issues` admin page flags import artifacts and scoring data problems:
+impossible coverage counts, leading `and ...` artist names, feature-only artists
+without Apple catalog totals, suspicious featured credits, and solo-looking
+artists marked as collabs. Feature-only artists such as Clem Creevy or Bill
+Cosmiq may have no Apple catalog artist page; keep their feature credits when
+the song title actually names them instead of forcing a catalog total.
+
 ## Project layout
 
 ```

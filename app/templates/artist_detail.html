@@ -38,6 +38,7 @@
     {% endif %}
     {% if is_admin %}
       <button id="enrich-btn" style="margin-top:0.5rem;">Enrich from MusicBrainz</button>
+      <button id="apple-enrich-btn" style="margin-top:0.5rem;">Enrich totals from Apple</button>
       <button id="artist-listen-next" style="margin-top:0.5rem;">Listen to this artist next</button>
       <span id="enrich-status" style="color:#888; font-size:0.85rem; margin-left:0.5rem;"></span>
     {% endif %}
@@ -284,6 +285,20 @@ document.getElementById('artist-listen-next')?.addEventListener('click', async (
   } else if (status) {
     status.textContent = 'could not add to listen-next queue';
   }
+});
+
+document.getElementById('apple-enrich-btn')?.addEventListener('click', async () => {
+  const status = document.getElementById('enrich-status');
+  if (status) status.textContent = 'fetching Apple catalog totals...';
+  const resp = await fetch(`/api/artists/${ARTIST_ID}/apple-catalog-enrich`, {method: 'POST'});
+  let data = null;
+  try { data = await resp.json(); } catch (e) {}
+  if (!resp.ok || !data || data.ok === false) {
+    if (status) status.textContent = (data && (data.error || data.reason)) || 'Apple catalog enrich failed';
+    return;
+  }
+  if (status) status.textContent = `Apple totals: ${data.release_total} releases, ${data.track_total} tracks`;
+  setTimeout(() => location.reload(), 800);
 });
 </script>
 {% endif %}

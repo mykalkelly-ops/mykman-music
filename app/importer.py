@@ -62,7 +62,7 @@ def parse_featured_artists(title: str | None) -> list[str]:
     for chunk in FEAT_RE.findall(text):
         parts = re.split(r"\s*(?:,|&| and )\s*", chunk, flags=re.IGNORECASE)
         for part in parts:
-            value = (part or "").strip()
+            value = re.sub(r"^(?:and|&)\s+", "", (part or "").strip(), flags=re.IGNORECASE)
             if value and value not in names:
                 names.append(value)
     return names
@@ -122,11 +122,17 @@ def get_or_create_album(db: Session, artist: Artist, title: str, year: int | Non
 
 
 def ensure_song_credit(db: Session, song: Song, artist: Artist, role: str = "primary") -> None:
-    existing = (
-        db.query(SongCredit)
-        .filter(SongCredit.song_id == song.id, SongCredit.artist_id == artist.id, SongCredit.role == role)
-        .one_or_none()
-    )
+    for pending in db.new:
+        if not isinstance(pending, SongCredit):
+            continue
+        if pending.song_id == song.id and pending.artist_id == artist.id and pending.role == role:
+            return
+    with db.no_autoflush:
+        existing = (
+            db.query(SongCredit)
+            .filter(SongCredit.song_id == song.id, SongCredit.artist_id == artist.id, SongCredit.role == role)
+            .one_or_none()
+        )
     if existing is None:
         db.add(SongCredit(song_id=song.id, artist_id=artist.id, role=role))
 

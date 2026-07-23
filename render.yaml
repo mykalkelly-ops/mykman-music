@@ -16,6 +16,12 @@ services:
         sync: false
       - key: MYKMAN_ADMIN_PASSWORD
         sync: false
+      - key: APPLE_TEAM_ID
+        sync: false
+      - key: APPLE_KEY_ID
+        sync: false
+      - key: APPLE_PRIVATE_KEY
+        sync: false
     disk:
       name: mykman-data
       mountPath: /var/data

@@ -145,6 +145,9 @@ Render service:
   - `MYKMAN_ADMIN_PASSWORD=...`
   - `KOFI_URL=...`
   - `KOFI_VERIFICATION_TOKEN=...`
+  - `APPLE_TEAM_ID=...`
+  - `APPLE_KEY_ID=...`
+  - `APPLE_PRIVATE_KEY=...` or local-only `APPLE_PRIVATE_KEY_PATH=...`
 
 Render deploys from `master`. After pushing to GitHub, wait for Render auto-deploy.
 
@@ -171,7 +174,13 @@ Free/Starter memory can be tight during heavy enrichment or expensive pages. Pre
 - Some artist origin city/state data must be manually filled to make the map region-specific.
 - Bulk enrich can be memory/time heavy on Render.
 - Apple Music XML does not provide everything needed for full discography completeness.
-- Apple API/MusicKit may later help with automatic new-release/listen-next workflows, but currently no Apple Developer account is used.
+- Apple Developer enrollment is now pending. Apple Music API/MusicKit is the next sync path to eliminate manual MacBook `Library.xml` updates.
+- `/apple-music` is the admin diagnostics page for Apple Music credentials, developer-token generation, MusicKit JS authorization, read-only library playlist preview, and guarded Month YYYY playlist import.
+- Apple Music import creates a `pre-apple-music-sync` DB snapshot and comparison export before writing. It upserts artists/albums/songs/playlists and playlist-song links, marks imported playlist songs liked, stores Apple API library IDs separately from old XML `apple_track_id`, and does not delete data or touch comparisons.
+- `/apple-music` can also create a private "MYKMAN Weekly Comparisons YYYY-MM-DD" Apple Music playlist from upcoming comparison candidates. This uses MusicKit browser authorization and only includes songs with `apple_library_id`.
+- Artist pages have an Apple catalog enrichment button for release/track totals. The `/artists` admin page also has a batch button to enrich the next 10 visible artists, skipping already Apple-synced artists unless the refresh checkbox is enabled. This is distinct from Apple library playlist sync: playlist sync imports Mykal's library playlists; catalog enrichment estimates the artist's broader Apple Music discography for coverage scoring. Live albums count; deluxe/expanded/anniversary duplicates should not count as separate releases. Avril Lavigne was updated from Apple catalog to 11 releases / 146 tracks on 2026-07-22 after the live-albums-count rule was clarified.
+- `/data-issues` is an admin cleanup report for impossible coverage counts, leading `and ...` artist names, feature-only artists without Apple catalog totals, suspicious featured credits, and solo-looking artists marked as collabs. Feature-only artists like Clem Creevy or Bill Cosmiq may have no Apple catalog page; that is not automatically wrong if the credited song title names them. Bill Cosmiq's two false feature credits on Alison's Halo/Fleshwater rows were removed, leaving the two Cannibal Ox credits.
+- `/today` uses cached album-review prompt/progress helpers. Album review prompts intentionally score only album families with at least one song that can plausibly cross the loved-album threshold; do not casually switch this back to full `album_scores(db)` on every Today page load.
 - Browser localStorage can preserve stale compare queues; cache key bumps are used when queue logic changes.
 - `transfer/` is untracked and should not be committed unless there is a deliberate reason.
 
@@ -200,4 +209,3 @@ Free/Starter memory can be tight during heavy enrichment or expensive pages. Pre
 Tell the new agent:
 
 > Read `PROJECT_HANDOFF.md` first. Protect comparison data. Do not overwrite the live Render DB with local DB. The project is MYKMAN Music, a music-ranking/data site plus paywalled living memoir through music. Public data is free; writings are Ko-fi gated. Never write essay prose for me; help structure and clarify.
-

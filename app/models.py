@@ -114,6 +114,7 @@ class Song(Base):
     track_number = Column(Integer, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     apple_track_id = Column(String, nullable=True, index=True)
+    apple_library_id = Column(String, nullable=True, index=True)
     play_count = Column(Integer, default=0, nullable=False)
     skip_count = Column(Integer, default=0, nullable=False)
     glicko_rating = Column(Float, default=DEFAULT_RATING)
@@ -156,6 +157,7 @@ class Playlist(Base):
     __tablename__ = "playlists"
     id = Column(Integer, primary_key=True)
     name = Column(String, unique=True, nullable=False)
+    apple_library_id = Column(String, nullable=True, index=True)
     month = Column(Integer, nullable=True)
     year = Column(Integer, nullable=True)
     songs = relationship("PlaylistSong", back_populates="playlist", cascade="all, delete-orphan")
@@ -268,6 +270,8 @@ def init_db(engine):
             conn.execute(text("ALTER TABLE songs ADD COLUMN play_count INTEGER DEFAULT 0"))
         if "skip_count" not in existing_cols:
             conn.execute(text("ALTER TABLE songs ADD COLUMN skip_count INTEGER DEFAULT 0"))
+        if "apple_library_id" not in existing_cols:
+            conn.execute(text("ALTER TABLE songs ADD COLUMN apple_library_id VARCHAR"))
         # Add artists.kind if missing
         try:
             artist_cols = {c["name"] for c in insp.get_columns("artists")}
@@ -324,6 +328,16 @@ def init_db(engine):
                         conn.execute(text(ddl))
                     except Exception:
                         pass
+        except Exception:
+            pass
+        # Note.visibility
+        try:
+            playlist_cols = {c["name"] for c in insp.get_columns("playlists")}
+            if "apple_library_id" not in playlist_cols:
+                try:
+                    conn.execute(text("ALTER TABLE playlists ADD COLUMN apple_library_id VARCHAR"))
+                except Exception:
+                    pass
         except Exception:
             pass
         # Note.visibility

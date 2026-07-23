@@ -2,17 +2,33 @@
 {% block content %}
 <h1>Artists</h1>
 <p style="color:#888">Coverage-adjusted artist scores from album scores and credited liked features. Low-discography coverage gets shrunk toward uncertainty so a few good songs do not pretend to be a complete verdict. MYKs can include half-MYKs.</p>
+{% if artist_total_count and not artist_showing_all %}
+<p style="color:#7a5a88; font-size:0.85rem;">Showing top {{ artists|length }} of {{ artist_total_count }} artists. <a href="/artists?all=1">Show all</a></p>
+{% elif artist_showing_all %}
+<p style="color:#7a5a88; font-size:0.85rem;">Showing all {{ artist_total_count }} artists. <a href="/artists">Show top 250</a></p>
+{% endif %}
+{% if request.state.is_admin %}
+<div style="display:flex; gap:0.65rem; flex-wrap:wrap; align-items:center; margin:0.85rem 0 1rem 0;">
+  <button id="apple-batch-enrich" type="button">Enrich next 10 Apple totals</button>
+  <label style="font-size:0.85rem; color:#7a5a88;">
+    <input id="apple-batch-force" type="checkbox">
+    refresh already-synced artists too
+  </label>
+  <span id="apple-batch-status" style="font-size:0.85rem; color:#7a5a88;"></span>
+</div>
+<div id="apple-batch-results" style="font-size:0.85rem; color:#555; margin-bottom:1rem;"></div>
+{% endif %}
 <table>
-  <thead><tr><th>#</th><th>MYKs</th><th>Artist</th><th>Score</th><th>Heard / Total Releases</th><th>Liked / Total Songs</th><th>Discography</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
+  <thead><tr><th>#</th><th>MYKs</th><th>Artist</th><th>Score</th><th>Heard / Total Releases</th><th>Heard / Total Tracks</th><th>Discography</th><th>Review</th>{% if request.state.is_admin %}<th>Listen Next</th>{% endif %}</tr></thead>
   <tbody>
   {% for a in artists %}
-    <tr>
+    <tr data-artist-id="{{ a.artist_id }}" data-apple-synced="{{ 'true' if a.artist_id in apple_synced else 'false' }}">
       <td>{{ loop.index }}</td>
       <td>{{ render_myks(myk_score(a.score))|safe }}</td>
       <td><a href="/artists/{{ a.artist_id }}">{{ a.name }}</a></td>
       <td>{{ "%.0f"|format(a.score) }}</td>
       <td>{{ a.listened_albums }} / {{ a.total_albums if a.total_albums is not none else "?" }}</td>
-      <td>{{ a.liked_songs }} / {{ a.total_songs if a.total_songs is not none else "?" }}</td>
+      <td>{{ a.listened_tracks }} / {{ a.total_songs if a.total_songs is not none else "?" }}</td>
       <td style="min-width:190px;">
         {% if a.discography_percent is not none and a.known_tracks %}
           <div style="height:0.7rem; background:#f6d1e4; border:2px solid var(--void); border-radius:999px; overflow:hidden;">
@@ -39,6 +55,49 @@
 </table>
 {% if request.state.is_admin %}
 <script>
+const appleBatchBtn = document.getElementById('apple-batch-enrich');
+const appleBatchStatus = document.getElementById('apple-batch-status');
+const appleBatchResults = document.getElementById('apple-batch-results');
+
+if (appleBatchBtn) {
+  appleBatchBtn.addEventListener('click', async () => {
+    const force = Boolean(document.getElementById('apple-batch-force')?.checked);
+    const artistIds = Array.from(document.querySelectorAll('tr[data-artist-id]'))
+      .filter(row => force || row.dataset.appleSynced !== 'true')
+      .slice(0, 10)
+      .map(row => Number(row.dataset.artistId));
+    if (!artistIds.length) {
+      appleBatchStatus.textContent = 'no visible artists need Apple totals';
+      return;
+    }
+    appleBatchBtn.disabled = true;
+    appleBatchStatus.textContent = `fetching Apple catalog totals for ${artistIds.length} artists...`;
+    appleBatchResults.innerHTML = '';
+    try {
+      const resp = await fetch('/api/artists/apple-catalog-enrich-batch?limit=10', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({artist_ids: artistIds, force})
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || data.reason || 'Apple batch enrich failed');
+      appleBatchStatus.textContent = `updated ${data.updated} of ${data.processed}`;
+      const rows = data.results.map(row => {
+        if (row.ok) return `<li><a href="/artists/${row.artist_id}">${row.artist_name}</a>: ${row.release_total} releases, ${row.track_total} tracks</li>`;
+        return `<li><a href="/artists/${row.artist_id}">${row.artist_name}</a>: ${row.reason || row.error || 'failed'}</li>`;
+      }).join('');
+      appleBatchResults.innerHTML = rows ? `<ul>${rows}</ul>` : 'No artists needed Apple totals.';
+      if (data.updated) {
+        setTimeout(() => location.reload(), 1600);
+      }
+    } catch (err) {
+      appleBatchStatus.textContent = err.message || 'Apple batch enrich failed';
+    } finally {
+      appleBatchBtn.disabled = false;
+    }
+  });
+}
+
 document.querySelectorAll('[data-queue-type]').forEach(btn => {
   btn.addEventListener('click', async () => {
     const targetType = btn.dataset.queueType;

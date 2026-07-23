@@ -7,6 +7,9 @@ from .models import Artist, Album, Song, PlaylistSong, Comparison, Note, SongCre
 
 ARTIST_ALIASES = {
     "Kanye West": ["Ye", "Donda"],
+    "Kali Uchis": ["and Kali Uchis"],
+    "Austin Feinstein": ["and Austin Feinstein"],
+    "Syd Bennett": ["and Syd Bennett"],
 }
 
 

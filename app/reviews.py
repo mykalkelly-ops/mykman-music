@@ -2,10 +2,12 @@
 Review prompting: surface songs / albums / artists the user clearly loves
 (confident high ratings) but hasn't written a note about yet.
 """
-from sqlalchemy.orm import Session
+from collections import defaultdict
 
-from .models import Song, Album, Artist, Note
-from .scoring import album_scores, artist_scores, star_tier, TIER_RD_THRESHOLD
+from sqlalchemy.orm import Session, joinedload
+
+from .models import Song, Album, Artist, Note, PlaylistSong
+from .scoring import album_scores, artist_scores, star_tier, TIER_RD_THRESHOLD, _album_family_key, _album_score_rows
 
 # "Loved" thresholds. Tunable as the library grows.
 LOVED_SONG_RATING = 1800.0
@@ -54,8 +56,47 @@ def loved_songs_needing_review(db: Session) -> list[dict]:
 
 def loved_albums_needing_review(db: Session) -> list[dict]:
     reviewed = _reviewed_ids(db, "album")
+    candidate_album_ids = {
+        album_id
+        for (album_id,) in (
+            db.query(Song.album_id)
+            .filter(Song.glicko_rating >= LOVED_ALBUM_SCORE)
+            .distinct()
+            .all()
+        )
+    }
+    if not candidate_album_ids:
+        return []
+
+    candidate_albums = (
+        db.query(Album)
+        .options(joinedload(Album.artist), joinedload(Album.songs))
+        .filter(Album.id.in_(candidate_album_ids))
+        .all()
+    )
+    candidate_keys = {_album_family_key(album) for album in candidate_albums}
+    candidate_artist_ids = {album.artist_id for album in candidate_albums}
+    albums_by_key: dict[tuple[int, str], list[Album]] = defaultdict(list)
+    for album in (
+        db.query(Album)
+        .options(joinedload(Album.artist), joinedload(Album.songs))
+        .filter(Album.artist_id.in_(candidate_artist_ids))
+        .all()
+    ):
+        key = _album_family_key(album)
+        if key in candidate_keys:
+            albums_by_key[key].append(album)
+
+    liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
+    scored = [
+        row
+        for row in (_album_score_rows(albums, liked_ids) for albums in albums_by_key.values())
+        if row is not None
+    ]
+    scored.sort(key=lambda row: row.score, reverse=True)
+
     out = []
-    for a in album_scores(db):
+    for a in scored:
         if a.score < LOVED_ALBUM_SCORE:
             break  # already sorted desc
         if a.album_id in reviewed:

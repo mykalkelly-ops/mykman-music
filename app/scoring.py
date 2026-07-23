@@ -15,7 +15,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from markupsafe import Markup
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from .models import Artist, Album, Song, PlaylistSong, SongCredit, ArtistMembership, Person, DEFAULT_RD
 from .canonical import canonical_key, linked_song_groups, normalize_title
@@ -283,7 +283,7 @@ def album_scores(db: Session) -> list[AlbumScore]:
     liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
     results: list[AlbumScore] = []
     groups: dict[tuple[int, str], list[Album]] = defaultdict(list)
-    for album in db.query(Album).all():
+    for album in db.query(Album).options(joinedload(Album.artist), joinedload(Album.songs)).all():
         groups[_album_family_key(album)].append(album)
     for albums in groups.values():
         row = _album_score_rows(albums, liked_ids)
@@ -350,20 +350,35 @@ def gender_breakdown(db: Session) -> list[tuple[str, int, float]]:
     return out
 
 
-def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: dict[int, int]) -> ArtistScore | None:
+def _artist_score_row(
+    db: Session,
+    artist: Artist,
+    liked_ids: set[int],
+    groups: dict[int, int],
+    credited_song_ids_by_artist: dict[int, set[int]] | None = None,
+    credit_roles_by_artist_song: dict[int, dict[int, set[str]]] | None = None,
+    liked_songs_by_id: dict[int, Song] | None = None,
+    collab_child_ids_by_artist: dict[int, set[int]] | None = None,
+) -> ArtistScore | None:
     if is_various_artists_name(artist.name):
         return None
     if artist.kind == "collab":
         return None
     total_weight = 0.0
     score_acc = 0.0
-    credited_song_ids = {
-        sid
-        for (sid,) in db.query(SongCredit.song_id)
-        .filter(SongCredit.artist_id == artist.id, SongCredit.role.in_(("primary", "featured")))
-        .distinct()
-        .all()
-    }
+    if credited_song_ids_by_artist is not None:
+        credited_song_ids = credited_song_ids_by_artist.get(artist.id, set())
+    else:
+        credit_roles_by_artist_song = credit_roles_by_artist_song or {}
+        credit_roles_by_artist_song[artist.id] = defaultdict(set)
+        credited_song_ids = {
+            sid
+            for sid, role in db.query(SongCredit.song_id, SongCredit.role)
+            .filter(SongCredit.artist_id == artist.id, SongCredit.role.in_(("primary", "featured")))
+            .distinct()
+            .all()
+            if not credit_roles_by_artist_song[artist.id][sid].add(role)
+        }
     liked_songs = 0
     listened_albums = 0
     listened_tracks = 0
@@ -405,19 +420,48 @@ def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: 
 
     score = (score_acc / total_weight) if total_weight else 0.0
 
-    credited_elsewhere_query = (
-        db.query(Song)
-        .join(SongCredit, SongCredit.song_id == Song.id)
-        .filter(
-            SongCredit.artist_id == artist.id,
-            SongCredit.role.in_(("primary", "featured")),
-            Song.id.in_(liked_ids),
-        )
-    )
     own_album_ids = [al.id for al in artist.albums]
-    if own_album_ids:
-        credited_elsewhere_query = credited_elsewhere_query.filter(~Song.album_id.in_(own_album_ids))
-    credited_elsewhere_songs = credited_elsewhere_query.all()
+    own_album_id_set = set(own_album_ids)
+    artist_credit_roles = (
+        credit_roles_by_artist_song.get(artist.id, {})
+        if credit_roles_by_artist_song is not None
+        else {}
+    )
+    if collab_child_ids_by_artist is None:
+        collab_child_ids_by_artist = defaultdict(set)
+        for parent_id, child_id in db.query(ArtistMembership.artist_id, ArtistMembership.child_artist_id).filter(ArtistMembership.child_artist_id.isnot(None)).all():
+            collab_child_ids_by_artist[parent_id].add(child_id)
+
+    def count_elsewhere_credit(song: Song) -> bool:
+        roles = artist_credit_roles.get(song.id, set())
+        if "featured" in roles:
+            return True
+        if "primary" not in roles or song.album_id in own_album_id_set:
+            return False
+        album_artist = song.album.artist if song.album else None
+        if album_artist is None or album_artist.kind != "collab":
+            return False
+        return artist.id in collab_child_ids_by_artist.get(album_artist.id, set())
+
+    if liked_songs_by_id is not None:
+        credited_elsewhere_songs = [
+            liked_songs_by_id[sid]
+            for sid in credited_song_ids
+            if sid in liked_songs_by_id and count_elsewhere_credit(liked_songs_by_id[sid])
+        ]
+    else:
+        credited_elsewhere_query = (
+            db.query(Song)
+            .join(SongCredit, SongCredit.song_id == Song.id)
+            .filter(
+                SongCredit.artist_id == artist.id,
+                SongCredit.role.in_(("primary", "featured")),
+                Song.id.in_(liked_ids),
+            )
+        )
+        if own_album_ids:
+            credited_elsewhere_query = credited_elsewhere_query.filter(~Song.album_id.in_(own_album_ids))
+        credited_elsewhere_songs = [song for song in credited_elsewhere_query.all() if count_elsewhere_credit(song)]
     evidence_tracks = listened_tracks
     if credited_elsewhere_songs:
         bonus_avg = sum(song.glicko_rating for song in credited_elsewhere_songs) / len(credited_elsewhere_songs)
@@ -472,9 +516,36 @@ def _artist_score_row(db: Session, artist: Artist, liked_ids: set[int], groups: 
 def artist_scores(db: Session) -> list[ArtistScore]:
     liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
     groups = linked_song_groups(db)
+    credited_song_ids_by_artist: dict[int, set[int]] = defaultdict(set)
+    credit_roles_by_artist_song: dict[int, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for artist_id, song_id, role in (
+        db.query(SongCredit.artist_id, SongCredit.song_id, SongCredit.role)
+        .filter(SongCredit.role.in_(("primary", "featured")))
+        .distinct()
+        .all()
+    ):
+        credited_song_ids_by_artist[artist_id].add(song_id)
+        credit_roles_by_artist_song[artist_id][song_id].add(role)
+    liked_songs_by_id = {
+        song.id: song
+        for song in db.query(Song).options(joinedload(Song.album).joinedload(Album.artist)).filter(Song.id.in_(liked_ids)).all()
+    } if liked_ids else {}
+    collab_child_ids_by_artist: dict[int, set[int]] = defaultdict(set)
+    for parent_id, child_id in db.query(ArtistMembership.artist_id, ArtistMembership.child_artist_id).filter(ArtistMembership.child_artist_id.isnot(None)).all():
+        collab_child_ids_by_artist[parent_id].add(child_id)
     results: list[ArtistScore] = []
-    for artist in db.query(Artist).all():
-        row = _artist_score_row(db, artist, liked_ids, groups)
+    artists = db.query(Artist).options(joinedload(Artist.albums).joinedload(Album.songs)).all()
+    for artist in artists:
+        row = _artist_score_row(
+            db,
+            artist,
+            liked_ids,
+            groups,
+            credited_song_ids_by_artist=credited_song_ids_by_artist,
+            credit_roles_by_artist_song=credit_roles_by_artist_song,
+            liked_songs_by_id=liked_songs_by_id,
+            collab_child_ids_by_artist=collab_child_ids_by_artist,
+        )
         if row is not None:
             results.append(row)
     results.sort(key=lambda row: row.score, reverse=True)
