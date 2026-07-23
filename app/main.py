@@ -719,20 +719,31 @@ def _data_issue_report(db: Session) -> dict[str, list[dict]]:
         for artist in db.query(Artist).filter(Artist.name.ilike("and %")).order_by(Artist.name.asc()).all()
     ]
 
-    feature_only_no_apple = []
+    feature_only_unchecked = []
+    feature_only_no_match = []
     for artist in db.query(Artist).order_by(Artist.name.asc()).all():
         if is_various_artists_name(artist.name) or artist.albums:
             continue
         credit_count = db.query(func.count(SongCredit.id)).filter(SongCredit.artist_id == artist.id).scalar() or 0
-        if credit_count and artist.internet_synced_at is None:
-            feature_only_no_apple.append(
+        if credit_count and artist.apple_catalog_status == "no_match":
+            feature_only_no_match.append(
                 {
                     "artist_id": artist.id,
                     "name": artist.name,
                     "credit_count": credit_count,
+                    "status": artist.apple_catalog_status,
                 }
             )
-        if len(feature_only_no_apple) >= 75:
+        elif credit_count and artist.internet_synced_at is None:
+            feature_only_unchecked.append(
+                {
+                    "artist_id": artist.id,
+                    "name": artist.name,
+                    "credit_count": credit_count,
+                    "status": artist.apple_catalog_status or "not_checked",
+                }
+            )
+        if len(feature_only_unchecked) >= 75 and len(feature_only_no_match) >= 75:
             break
 
     suspicious_feature_credits = []
@@ -786,7 +797,8 @@ def _data_issue_report(db: Session) -> dict[str, list[dict]]:
     return {
         "impossible_counts": impossible_counts,
         "leading_conjunction_artists": leading_conjunction_artists,
-        "feature_only_no_apple": feature_only_no_apple,
+        "feature_only_unchecked": feature_only_unchecked[:75],
+        "feature_only_no_match": feature_only_no_match[:75],
         "suspicious_feature_credits": suspicious_feature_credits,
         "solo_looking_collabs": solo_looking_collabs,
     }

@@ -36,13 +36,35 @@
 <p style="color:#666;">None found.</p>
 {% endif %}
 
-<h2>Feature-Only Artists Without Apple Catalog Totals</h2>
-<p style="color:#888;">Often okay. Clem Creevy and Bill Cosmiq belong in this kind of bucket when Apple has no standalone catalog artist page.</p>
-{% if report.feature_only_no_apple %}
+<h2>Feature-Only Artists Not Yet Apple-Checked</h2>
+<p style="color:#888;">These artists have only feature credits locally. Many still have real Apple catalog pages, so try Enrich before marking no match.</p>
+{% if report.feature_only_unchecked %}
+<table>
+  <thead><tr><th>Artist</th><th>Credits</th><th>Action</th></tr></thead>
+  <tbody>
+  {% for row in report.feature_only_unchecked %}
+    <tr>
+      <td><a href="/artists/{{ row.artist_id }}">{{ row.name }}</a></td>
+      <td>{{ row.credit_count }}</td>
+      <td>
+        <button type="button" data-apple-enrich="{{ row.artist_id }}">Enrich</button>
+        <button type="button" data-apple-no-match="{{ row.artist_id }}">No match</button>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:#666;">None found.</p>
+{% endif %}
+
+<h2>Feature-Only Artists Marked No Apple Match</h2>
+<p style="color:#888;">These are intentionally skipped by batch enrichment. Clear the status from the artist page if that call was wrong.</p>
+{% if report.feature_only_no_match %}
 <table>
   <thead><tr><th>Artist</th><th>Credits</th></tr></thead>
   <tbody>
-  {% for row in report.feature_only_no_apple %}
+  {% for row in report.feature_only_no_match %}
     <tr>
       <td><a href="/artists/{{ row.artist_id }}">{{ row.name }}</a></td>
       <td>{{ row.credit_count }}</td>
@@ -91,4 +113,51 @@
 {% else %}
 <p style="color:#666;">None found.</p>
 {% endif %}
+
+<script>
+async function postJson(url, body = {}) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  let data = null;
+  try { data = await resp.json(); } catch (e) {}
+  if (!resp.ok || (data && data.ok === false)) {
+    throw new Error((data && (data.detail || data.error || data.reason)) || 'Request failed');
+  }
+  return data;
+}
+
+document.querySelectorAll('[data-apple-enrich]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const artistId = btn.dataset.appleEnrich;
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+    try {
+      const data = await postJson(`/api/artists/${artistId}/apple-catalog-enrich`);
+      btn.textContent = `${data.release_total} / ${data.track_total}`;
+      setTimeout(() => location.reload(), 900);
+    } catch (err) {
+      btn.textContent = err.message || 'Failed';
+      btn.disabled = false;
+    }
+  });
+});
+
+document.querySelectorAll('[data-apple-no-match]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const artistId = btn.dataset.appleNoMatch;
+    btn.disabled = true;
+    btn.textContent = 'Marking...';
+    try {
+      await postJson(`/api/artists/${artistId}/apple-catalog-status`, {status: 'no_match'});
+      setTimeout(() => location.reload(), 500);
+    } catch (err) {
+      btn.textContent = err.message || 'Failed';
+      btn.disabled = false;
+    }
+  });
+});
+</script>
 {% endblock %}
