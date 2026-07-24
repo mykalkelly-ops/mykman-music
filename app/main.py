@@ -62,6 +62,9 @@ TODAY_CACHE_TTL_SECONDS = 300
 TODAY_VALUE_CACHE: dict[str, dict[str, object]] = {
     "review_albums": {"created_at": 0.0, "value": None},
     "progress": {"created_at": 0.0, "value": None},
+    "gender_breakdown": {"created_at": 0.0, "value": None},
+    "listened_song_count": {"created_at": 0.0, "value": None},
+    "liked_song_count": {"created_at": 0.0, "value": None},
 }
 TODAY_VALUE_CACHE_LOCK = threading.Lock()
 
@@ -113,6 +116,18 @@ def cached_loved_albums_needing_review(db: Session) -> list[dict]:
 
 def cached_progress_metrics(db: Session) -> dict[str, int | float]:
     return _cached_today_value("progress", lambda: progress_metrics(db))
+
+
+def cached_gender_breakdown(db: Session) -> list[tuple[str, int, float]]:
+    return _cached_today_value("gender_breakdown", lambda: gender_breakdown(db))
+
+
+def cached_listened_song_count(db: Session) -> int:
+    return _cached_today_value("listened_song_count", lambda: _listened_song_count(db))
+
+
+def cached_liked_song_count(db: Session) -> int:
+    return _cached_today_value("liked_song_count", lambda: _liked_song_count(db))
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -2672,6 +2687,7 @@ def stats_page(request: Request, db: Session = Depends(get_session)):
 
     liked_songs = (
         db.query(Song).join(Album).join(Artist)
+        .options(joinedload(Song.album).joinedload(Album.artist))
         .filter(Song.id.in_(liked_song_ids)).all()
     ) if liked_song_ids else []
 
@@ -2680,38 +2696,66 @@ def stats_page(request: Request, db: Session = Depends(get_session)):
         lambda s: f"{(s.album.year // 10) * 10}s" if s.album and s.album.year else None,
         liked_songs,
     )
-    by_gender = gender_breakdown(db)
+    by_gender = cached_gender_breakdown(db)
     max_genre_count = max((v for _, v in by_genre), default=1)
     max_decade_count = max((v for _, v in by_decade), default=1)
     max_gender_count = max((count for _, count, _ in by_gender), default=1)
 
-    total_songs_in_lib = _listened_song_count(db)
-    total_liked = _liked_song_count(db)
+    total_songs_in_lib = cached_listened_song_count(db)
+    total_liked = cached_liked_song_count(db)
     total_comparisons = db.query(func.count(Comparison.id)).scalar() or 0
-    progress = progress_metrics(db)
+    progress = cached_progress_metrics(db)
 
     # Best monthly playlists by average rating of included songs
-    playlist_rows = []
-    for p in db.query(Playlist).all():
-        avg = (
-            db.query(func.avg(Song.glicko_rating))
-            .join(PlaylistSong, PlaylistSong.song_id == Song.id)
-            .filter(PlaylistSong.playlist_id == p.id)
-            .scalar()
-        )
-        if avg is not None:
-            count = (
-                db.query(func.count(PlaylistSong.id))
-                .filter(PlaylistSong.playlist_id == p.id)
-                .scalar()
-                or 0
+    playlist_rows = [
+        {
+            "id": playlist_id,
+            "name": name,
+            "year": year,
+            "month": month,
+            "avg": float(avg),
+            "count": int(count or 0),
+        }
+        for playlist_id, name, year, month, avg, count in (
+            db.query(
+                Playlist.id,
+                Playlist.name,
+                Playlist.year,
+                Playlist.month,
+                func.avg(Song.glicko_rating),
+                func.count(PlaylistSong.id),
             )
-            playlist_rows.append({"id": p.id, "name": p.name, "year": p.year, "month": p.month, "avg": float(avg), "count": count})
+            .join(PlaylistSong, PlaylistSong.playlist_id == Playlist.id)
+            .join(Song, Song.id == PlaylistSong.song_id)
+            .group_by(Playlist.id, Playlist.name, Playlist.year, Playlist.month)
+            .all()
+        )
+        if avg is not None
+    ]
     playlist_rows.sort(key=lambda r: -r["avg"])
     max_playlist_avg = max((row["avg"] for row in playlist_rows), default=1.0)
 
-    top_artists = top_artist_scores(db, limit=10)
-    max_artist_score = max((row.score for row in top_artists), default=1.0)
+    top_artists = [
+        {"artist_id": artist_id, "name": name, "score": float(avg or 0.0)}
+        for artist_id, name, avg, liked_count in (
+            db.query(
+                Artist.id,
+                Artist.name,
+                func.avg(Song.glicko_rating).label("avg_rating"),
+                func.count(func.distinct(Song.id)).label("liked_count"),
+            )
+            .join(SongCredit, SongCredit.artist_id == Artist.id)
+            .join(Song, Song.id == SongCredit.song_id)
+            .join(PlaylistSong, PlaylistSong.song_id == Song.id)
+            .filter(SongCredit.role.in_(("primary", "featured")))
+            .group_by(Artist.id, Artist.name)
+            .having(func.count(func.distinct(Song.id)) >= 3)
+            .order_by(func.avg(Song.glicko_rating).desc(), func.count(func.distinct(Song.id)).desc())
+            .limit(10)
+            .all()
+        )
+    ]
+    max_artist_score = max((row["score"] for row in top_artists), default=1.0)
 
     return templates.TemplateResponse(
         request, "stats.html",

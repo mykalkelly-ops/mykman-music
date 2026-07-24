@@ -10,7 +10,6 @@ Philosophy:
 - MYK tiers use fixed Glicko rating cutoffs. Songs with high RD are "unrated"
   until the system has enough data to be confident.
 """
-import heapq
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -317,31 +316,64 @@ def _expand_artist_genders(db: Session, artist_id: int, depth: int = 0, seen: se
 
 
 def gender_breakdown(db: Session) -> list[tuple[str, int, float]]:
-    rated_songs = db.query(Song).filter(Song.comparison_count > 0).all()
-    artist_cache: dict[int, set[str]] = {}
+    rated_songs = db.query(Song.id, Song.glicko_rating).filter(Song.comparison_count > 0).all()
+    rated_song_ids = {song_id for song_id, _ in rated_songs}
+    if not rated_song_ids:
+        return [(category, 0, 0.0) for category in ("male", "female", "nonbinary", "mixed", "unknown")]
 
+    person_genders = {
+        person_id: gender or "unknown"
+        for person_id, gender in db.query(Person.id, Person.gender).all()
+    }
+    memberships_by_artist: dict[int, list[tuple[int | None, int | None]]] = defaultdict(list)
+    for artist_id, person_id, child_artist_id in db.query(
+        ArtistMembership.artist_id,
+        ArtistMembership.person_id,
+        ArtistMembership.child_artist_id,
+    ).all():
+        memberships_by_artist[artist_id].append((person_id, child_artist_id))
+
+    credits_by_song: dict[int, set[int]] = defaultdict(set)
+    for song_id, artist_id in (
+        db.query(SongCredit.song_id, SongCredit.artist_id)
+        .filter(SongCredit.song_id.in_(rated_song_ids), SongCredit.role.in_(("primary", "featured")))
+        .all()
+    ):
+        credits_by_song[song_id].add(artist_id)
+
+    artist_cache: dict[int, set[str]] = {}
     def gset_for(artist_id: int) -> set[str]:
-        if artist_id not in artist_cache:
-            artist_cache[artist_id] = _expand_artist_genders(db, artist_id)
-        return artist_cache[artist_id]
+        def expand(current_id: int, depth: int = 0, seen: set[int] | None = None) -> set[str]:
+            if seen is None:
+                seen = set()
+            if depth > 3 or current_id in seen:
+                return set()
+            if current_id in artist_cache:
+                return artist_cache[current_id]
+            seen.add(current_id)
+            genders: set[str] = set()
+            for person_id, child_artist_id in memberships_by_artist.get(current_id, []):
+                if person_id is not None:
+                    genders.add(person_genders.get(person_id, "unknown"))
+                elif child_artist_id is not None:
+                    genders |= expand(child_artist_id, depth + 1, seen)
+            artist_cache[current_id] = genders
+            return genders
+
+        return expand(artist_id)
 
     bucket: dict[str, list[float]] = {"male": [], "female": [], "nonbinary": [], "mixed": [], "unknown": []}
-    for song in rated_songs:
-        credits = (
-            db.query(SongCredit)
-            .filter(SongCredit.song_id == song.id, SongCredit.role.in_(("primary", "featured")))
-            .all()
-        )
+    for song_id, rating in rated_songs:
         all_genders: set[str] = set()
-        for credit in credits:
-            all_genders |= gset_for(credit.artist_id)
+        for artist_id in credits_by_song.get(song_id, set()):
+            all_genders |= gset_for(artist_id)
         named = {gender for gender in all_genders if gender in ("male", "female", "nonbinary")}
         if len(named) >= 2:
-            bucket["mixed"].append(song.glicko_rating)
+            bucket["mixed"].append(rating)
         elif len(named) == 1:
-            bucket[next(iter(named))].append(song.glicko_rating)
+            bucket[next(iter(named))].append(rating)
         else:
-            bucket["unknown"].append(song.glicko_rating)
+            bucket["unknown"].append(rating)
     out = []
     for category in ("male", "female", "nonbinary", "mixed", "unknown"):
         ratings = bucket[category]
@@ -559,16 +591,4 @@ def artist_score_for(db: Session, artist: Artist) -> ArtistScore | None:
 
 
 def top_artist_scores(db: Session, limit: int = 10) -> list[ArtistScore]:
-    liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
-    groups = linked_song_groups(db)
-    heap: list[tuple[float, int, ArtistScore]] = []
-    for artist in db.query(Artist).yield_per(100):
-        row = _artist_score_row(db, artist, liked_ids, groups)
-        if row is None:
-            continue
-        item = (row.score, row.artist_id, row)
-        if len(heap) < limit:
-            heapq.heappush(heap, item)
-        elif item[:2] > heap[0][:2]:
-            heapq.heapreplace(heap, item)
-    return [item[2] for item in sorted(heap, key=lambda x: (x[0], x[1]), reverse=True)]
+    return artist_scores(db)[:limit]
