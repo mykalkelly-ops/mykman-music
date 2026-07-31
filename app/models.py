@@ -251,6 +251,16 @@ class Comparison(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ComparisonQueueItem(Base):
+    __tablename__ = "comparison_queue_items"
+    id = Column(Integer, primary_key=True)
+    song_a_id = Column(Integer, ForeignKey("songs.id"), nullable=False, index=True)
+    song_b_id = Column(Integer, ForeignKey("songs.id"), nullable=False, index=True)
+    status = Column(String, nullable=False, default="active", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
 def init_db(engine):
     Base.metadata.create_all(engine)
     # Lightweight SQLite migration: add columns if missing.

@@ -43,8 +43,8 @@
 </section>
 
 <section class="panel">
-  <h2 style="margin-top:0;">Weekly comparison playlist</h2>
-  <p style="color:#7a5a88;">Create a private Apple Music playlist from MYKMAN's next comparison candidates. Listen through it on your phone, then come back to compare.</p>
+  <h2 style="margin-top:0;">Rotating comparison playlist</h2>
+  <p style="color:#7a5a88;">Create or preview the same comparison queue shown on the Compare page. The active queue is the source of truth.</p>
   <label style="color:#7a5a88;">Pairs:
     <select id="weekly-pair-count">
       <option>8</option>
@@ -54,8 +54,8 @@
     </select>
   </label>
   <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.75rem;">
-    <button type="button" onclick="previewWeeklyComparisonPlaylist()" {% if not configured %}disabled{% endif %}>Preview weekly playlist</button>
-    <button type="button" onclick="createWeeklyComparisonPlaylist()" {% if not configured %}disabled{% endif %}>Create Apple Music playlist</button>
+    <button type="button" onclick="previewWeeklyComparisonPlaylist()" {% if not configured %}disabled{% endif %}>Preview comparison queue</button>
+    <button type="button" onclick="createWeeklyComparisonPlaylist()" {% if not configured %}disabled{% endif %}>Create rotating playlist</button>
   </div>
   <p id="weekly-status" style="color:#7a5a88; font-weight:700;"></p>
   <pre id="weekly-output" style="display:none; white-space:pre-wrap; word-break:break-word;"></pre>
@@ -78,6 +78,7 @@ let developerToken = null;
 let musicConfigured = false;
 let lastMonthPlaylistPayload = null;
 let lastWeeklyPlaylistPayload = null;
+const COMPARISON_PLAYLIST_ID_KEY = 'mykman_comparison_playlist_id_v1';
 
 function setMusicStatus(message) {
   document.getElementById('music-status').textContent = message;
@@ -350,16 +351,16 @@ async function previewMonthPlaylistSync() {
 async function previewWeeklyComparisonPlaylist() {
   try {
     const pairCount = Number(document.getElementById('weekly-pair-count').value || 12);
-    setWeeklyStatus('Picking comparison candidates...');
+    setWeeklyStatus('Loading canonical comparison queue...');
     const response = await fetch(`/api/apple-music/weekly-comparison-candidates?pairs=${pairCount}`, {cache: 'no-store'});
     const payload = await response.json();
     if (!response.ok) {
-      setWeeklyStatus(payload.detail || 'Could not pick weekly comparison candidates.');
+      setWeeklyStatus(payload.detail || 'Could not load comparison queue.');
       showWeeklyOutput(payload);
       return null;
     }
     lastWeeklyPlaylistPayload = payload;
-    setWeeklyStatus(`Picked ${payload.created_pairs} pairs (${payload.tracks.length} tracks with Apple Music IDs).`);
+    setWeeklyStatus(`Loaded ${payload.created_pairs} queued pairs (${payload.tracks.length} Apple Music tracks).`);
     showWeeklyOutput({
       created_pairs: payload.created_pairs,
       tracks: payload.tracks.map((track) => `${track.title} - ${track.artist}`),
@@ -367,18 +368,14 @@ async function previewWeeklyComparisonPlaylist() {
     });
     return payload;
   } catch (error) {
-    setWeeklyStatus('Weekly playlist preview failed.');
+    setWeeklyStatus('Comparison queue preview failed.');
     showWeeklyOutput({error: String(error && (error.message || error))});
     return null;
   }
 }
 
 function weeklyPlaylistName() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `MYKMAN Weekly Comparisons ${year}-${month}-${day}`;
+  return 'MYKMAN Comparisons';
 }
 
 async function createWeeklyComparisonPlaylist() {
@@ -396,10 +393,46 @@ async function createWeeklyComparisonPlaylist() {
     }
     const token = developerToken || await generateToken(false);
     const name = weeklyPlaylistName();
+    setWeeklyStatus(`Checking for "${name}" in Apple Music...`);
+    const playlistResponse = await fetch('https://api.music.apple.com/v1/me/library/playlists?limit=100', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Music-User-Token': music.musicUserToken
+      }
+    });
+    if (playlistResponse.ok) {
+      const playlistPayload = await playlistResponse.json();
+      const existing = responseData(playlistPayload).find((playlist) => {
+        const attrs = playlist.attributes || {};
+        return attrs.name === name;
+      });
+      if (existing && existing.id) {
+        localStorage.setItem(COMPARISON_PLAYLIST_ID_KEY, existing.id);
+        const addResponse = await fetch(`https://api.music.apple.com/v1/me/library/playlists/${encodeURIComponent(existing.id)}/tracks`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Music-User-Token': music.musicUserToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            data: payload.tracks.map((track) => ({
+              id: track.apple_library_id,
+              type: track.type || 'library-songs'
+            }))
+          })
+        });
+        setWeeklyStatus(addResponse.ok
+          ? `Using existing "${name}" and added the current queue tracks.`
+          : `Found existing "${name}", but Apple Music did not accept track additions (${addResponse.status}).`);
+        showWeeklyOutput({name, playlist_id: existing.id, reused: true, add_status: addResponse.status});
+        return;
+      }
+    }
     const body = {
       attributes: {
         name,
-        description: `Comparison candidates generated by MYKMAN Music. ${payload.created_pairs} pairs.`,
+        description: `Rotating comparison queue generated by MYKMAN Music. ${payload.created_pairs} pairs.`,
         isPublic: false
       },
       relationships: {
@@ -429,6 +462,10 @@ async function createWeeklyComparisonPlaylist() {
       showWeeklyOutput(result || text);
       return;
     }
+    const created = responseData(result)[0] || (result && result.data && result.data[0]);
+    if (created && created.id) {
+      localStorage.setItem(COMPARISON_PLAYLIST_ID_KEY, created.id);
+    }
     setWeeklyStatus(`Created "${name}" with ${payload.tracks.length} tracks.`);
     showWeeklyOutput({
       name,
@@ -436,7 +473,7 @@ async function createWeeklyComparisonPlaylist() {
       response: result || text
     });
   } catch (error) {
-    setWeeklyStatus('Weekly playlist creation failed.');
+    setWeeklyStatus('Comparison playlist creation failed.');
     showWeeklyOutput({error: String(error && (error.message || error))});
   }
 }

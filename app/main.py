@@ -22,7 +22,8 @@ from sqlalchemy.orm import Session, joinedload
 from .db import engine, get_session
 from .models import (
     Artist, Album, Song, SongLink, Playlist, PlaylistSong, Comparison, Note, Comment,
-    Person, ArtistMembership, SongCredit, Subscriber, AlbumTrack, ListenQueueItem, NoteSong, ArtistRelease, init_db,
+    Person, ArtistMembership, SongCredit, Subscriber, AlbumTrack, ListenQueueItem, NoteSong, ArtistRelease,
+    ComparisonQueueItem, init_db,
 )
 from .auth import (
     is_admin, require_admin, login as do_login, logout as do_logout,
@@ -65,6 +66,7 @@ TODAY_VALUE_CACHE: dict[str, dict[str, object]] = {
     "gender_breakdown": {"created_at": 0.0, "value": None},
     "listened_song_count": {"created_at": 0.0, "value": None},
     "liked_song_count": {"created_at": 0.0, "value": None},
+    "album_scores": {"created_at": 0.0, "value": None},
 }
 TODAY_VALUE_CACHE_LOCK = threading.Lock()
 
@@ -128,6 +130,14 @@ def cached_listened_song_count(db: Session) -> int:
 
 def cached_liked_song_count(db: Session) -> int:
     return _cached_today_value("liked_song_count", lambda: _liked_song_count(db))
+
+
+def cached_album_scores(db: Session, refresh: bool = False):
+    if refresh:
+        with TODAY_VALUE_CACHE_LOCK:
+            TODAY_VALUE_CACHE["album_scores"]["created_at"] = 0.0
+            TODAY_VALUE_CACHE["album_scores"]["value"] = None
+    return _cached_today_value("album_scores", lambda: album_scores(db))
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -1007,23 +1017,28 @@ def songs_list(
 
 
 @app.get("/albums", response_class=HTMLResponse)
-def albums_page(request: Request, unknown_first: int = 0, db: Session = Depends(get_session)):
+def albums_page(request: Request, unknown_first: int = 0, all: int = 0, refresh: int = 0, db: Session = Depends(get_session)):
     reviewed = {
         tid for (tid,) in db.query(Note.target_id).filter(Note.target_type == "album", Note.target_id.isnot(None)).distinct().all()
     }
     covers = {aid: cp for (aid, cp) in db.query(Album.id, Album.cover_path).filter(Album.cover_path.isnot(None)).all()}
-    all_albums = album_scores(db)
+    all_albums = cached_album_scores(db, refresh=bool(refresh))
     albums_main = [a for a in all_albums if a.release_type == "album"]
     albums_eps = [a for a in all_albums if a.release_type == "ep"]
     if request.state.is_admin and unknown_first:
         albums_main.sort(key=lambda a: (a.displayed_total_tracks is not None, -a.score, a.title.lower()))
         albums_eps.sort(key=lambda a: (a.displayed_total_tracks is not None, -a.score, a.title.lower()))
+    visible_albums = albums_main if all else albums_main[:250]
+    visible_eps = albums_eps if all else albums_eps[:100]
     return templates.TemplateResponse(
         request,
         "albums.html",
         {
-            "albums": albums_main,
-            "eps": albums_eps,
+            "albums": visible_albums,
+            "eps": visible_eps,
+            "album_total_count": len(albums_main),
+            "ep_total_count": len(albums_eps),
+            "album_showing_all": bool(all),
             "reviewed_ids": reviewed,
             "covers": covers,
             "unknown_first": bool(unknown_first),
@@ -3103,7 +3118,118 @@ def _song_payload(s: Song) -> dict:
         "comparison_count": s.comparison_count,
         "play_count": s.play_count or 0,
         "skip_count": s.skip_count or 0,
+        "apple_library_id": s.apple_library_id,
     }
+
+
+COMPARISON_QUEUE_DEFAULT_PAIRS = 4
+COMPARISON_QUEUE_MAX_PAIRS = 40
+
+
+def _comparison_pair_key(a_id: int, b_id: int) -> tuple[int, int]:
+    return tuple(sorted((int(a_id), int(b_id))))
+
+
+def _active_comparison_queue(db: Session) -> list[ComparisonQueueItem]:
+    return (
+        db.query(ComparisonQueueItem)
+        .filter(ComparisonQueueItem.status == "active")
+        .order_by(ComparisonQueueItem.id.asc())
+        .all()
+    )
+
+
+def _queue_track_payload(song: Song) -> dict:
+    return {
+        "song_id": song.id,
+        "apple_library_id": song.apple_library_id,
+        "type": "library-songs",
+        "title": song.title,
+        "artist": song.album.artist.name if song.album and song.album.artist else "",
+        "album": song.album.title if song.album else "",
+    }
+
+
+def _queue_item_payload(item: ComparisonQueueItem, db: Session) -> dict | None:
+    a = db.get(Song, item.song_a_id)
+    b = db.get(Song, item.song_b_id)
+    if a is None or b is None:
+        item.status = "stale"
+        item.completed_at = datetime.utcnow()
+        db.flush()
+        return None
+    return {
+        "queue_item_id": item.id,
+        "a": _song_payload(a),
+        "b": _song_payload(b),
+    }
+
+
+def _comparison_queue_payload(items: list[ComparisonQueueItem], db: Session) -> dict:
+    pairs = []
+    tracks_by_song_id: dict[int, dict] = {}
+    for item in items:
+        payload = _queue_item_payload(item, db)
+        if payload is None:
+            continue
+        pairs.append(payload)
+        for side in ("a", "b"):
+            song_payload = payload[side]
+            if song_payload.get("apple_library_id"):
+                song = db.get(Song, song_payload["id"])
+                if song is not None:
+                    tracks_by_song_id[song.id] = _queue_track_payload(song)
+    return {
+        "pairs": pairs,
+        "tracks": list(tracks_by_song_id.values()),
+        "created_pairs": len(pairs),
+    }
+
+
+def _ensure_comparison_queue(db: Session, target_pairs: int = COMPARISON_QUEUE_DEFAULT_PAIRS) -> list[ComparisonQueueItem]:
+    target_pairs = max(1, min(int(target_pairs or COMPARISON_QUEUE_DEFAULT_PAIRS), COMPARISON_QUEUE_MAX_PAIRS))
+    active_items = _active_comparison_queue(db)
+    active_pair_keys = {_comparison_pair_key(item.song_a_id, item.song_b_id) for item in active_items}
+    active_song_ids = {sid for item in active_items for sid in (item.song_a_id, item.song_b_id)}
+    attempts = 0
+    max_attempts = max(120, target_pairs * 40)
+
+    while len(active_items) < target_pairs and attempts < max_attempts:
+        attempts += 1
+        pair = pick_pair(db)
+        if pair is None:
+            break
+        a, b = pair
+        if not a.apple_library_id or not b.apple_library_id:
+            continue
+        pair_key = _comparison_pair_key(a.id, b.id)
+        if pair_key in active_pair_keys:
+            continue
+        if a.id in active_song_ids or b.id in active_song_ids:
+            continue
+
+        item = ComparisonQueueItem(song_a_id=a.id, song_b_id=b.id, status="active")
+        db.add(item)
+        db.flush()
+        note_recent_pair(a.id, b.id)
+        active_items.append(item)
+        active_pair_keys.add(pair_key)
+        active_song_ids.add(a.id)
+        active_song_ids.add(b.id)
+
+    db.commit()
+    return _active_comparison_queue(db)
+
+
+def _complete_comparison_queue_item(db: Session, song_a_id: int, song_b_id: int) -> ComparisonQueueItem | None:
+    pair_key = _comparison_pair_key(song_a_id, song_b_id)
+    for item in _active_comparison_queue(db):
+        if _comparison_pair_key(item.song_a_id, item.song_b_id) == pair_key:
+            item.status = "completed"
+            item.completed_at = datetime.utcnow()
+            db.flush()
+            return item
+    return None
 
 
 def _normalize_track_title(value: str) -> str:
@@ -3175,7 +3301,8 @@ def _album_track_rows(album: Album):
 def compare_page(request: Request):
     if not is_admin(request):
         return RedirectResponse("/login", status_code=302)
-    response = templates.TemplateResponse(request, "compare.html", {})
+    config = get_apple_music_config()
+    response = templates.TemplateResponse(request, "compare.html", {"apple_music_configured": config.configured})
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
@@ -3255,46 +3382,32 @@ def undo_last(request: Request, db: Session = Depends(get_session)):
 
 
 @app.get("/api/next-pair")
-def next_pair(db: Session = Depends(get_session)):
-    pair = pick_pair(db)
-    if pair is None:
+def next_pair(request: Request, db: Session = Depends(get_session)):
+    require_admin(request)
+    active_items = _ensure_comparison_queue(db, 1)
+    if not active_items:
         return JSONResponse({"error": "not enough songs"}, status_code=404)
-    a, b = pair
-    from .pair_selector import note_recent_pair
-    note_recent_pair(a.id, b.id)
+    pair_payload = _queue_item_payload(active_items[0], db)
+    if pair_payload is None:
+        db.commit()
+        return JSONResponse({"error": "not enough songs"}, status_code=404)
     total_comparisons = db.query(func.count(Comparison.id)).scalar() or 0
     return {
-        "a": _song_payload(a),
-        "b": _song_payload(b),
+        **pair_payload,
         "total_comparisons": total_comparisons,
     }
 
 
 @app.get("/api/next-pairs")
-def next_pairs(n: int = 4, db: Session = Depends(get_session)):
-    from .pair_selector import note_recent_pair
+def next_pairs(request: Request, n: int = 4, db: Session = Depends(get_session)):
+    require_admin(request)
     n = max(1, min(int(n), 8))
-    pairs = []
-    seen_ids: set[int] = set()
-    seen_pairs: set[tuple[int, int]] = set()
-    attempts = 0
-    max_attempts = max(60, n * 24)
-    while len(pairs) < n and attempts < max_attempts:
-        attempts += 1
-        p = pick_pair(db)
-        if p is None:
-            break
-        a, b = p
-        pair_key = tuple(sorted((a.id, b.id)))
-        # Avoid the same song or same exact pair appearing twice within one batch
-        if a.id in seen_ids or b.id in seen_ids or pair_key in seen_pairs:
-            continue
-        seen_ids.add(a.id); seen_ids.add(b.id)
-        seen_pairs.add(pair_key)
-        note_recent_pair(a.id, b.id)
-        pairs.append({"a": _song_payload(a), "b": _song_payload(b)})
+    active_items = _ensure_comparison_queue(db, n)
+    payload = _comparison_queue_payload(active_items[:n], db)
+    if len(payload["pairs"]) != len(active_items[:n]):
+        db.commit()
     total_comparisons = db.query(func.count(Comparison.id)).scalar() or 0
-    return {"pairs": pairs, "total_comparisons": total_comparisons}
+    return {"pairs": payload["pairs"], "tracks": payload["tracks"], "total_comparisons": total_comparisons}
 
 
 class CompareBody(BaseModel):
@@ -3359,11 +3472,17 @@ def submit_comparison(body: CompareBody, request: Request, db: Session = Depends
 
     # Anti-repeat tracking
     note_recent_pair(a.id, b.id)
+    completed_queue_item = _complete_comparison_queue_item(db, a.id, b.id)
+    active_items = _ensure_comparison_queue(db, COMPARISON_QUEUE_DEFAULT_PAIRS)
+    queue_payload = _comparison_queue_payload(active_items, db)
     invalidate_artist_scores_cache()
 
     return {
         "a": _song_payload(a),
         "b": _song_payload(b),
+        "completed_queue_item_id": completed_queue_item.id if completed_queue_item else None,
+        "queue": queue_payload,
+        "next_pair": queue_payload["pairs"][0] if queue_payload["pairs"] else None,
     }
 
 
@@ -3396,45 +3515,15 @@ def api_comparison_count(db: Session = Depends(get_session)):
 def api_weekly_comparison_candidates(request: Request, pairs: int = 12, db: Session = Depends(get_session)):
     require_admin(request)
     pairs = max(1, min(int(pairs or 12), 40))
-    selected_pairs = []
-    tracks_by_id: dict[int, dict] = {}
-    seen_ids: set[int] = set()
-    seen_pairs: set[tuple[int, int]] = set()
-    attempts = 0
-    max_attempts = max(100, pairs * 30)
-    while len(selected_pairs) < pairs and attempts < max_attempts:
-        attempts += 1
-        pair = pick_pair(db)
-        if pair is None:
-            break
-        a, b = pair
-        pair_key = tuple(sorted((a.id, b.id)))
-        if pair_key in seen_pairs:
-            continue
-        if not a.apple_library_id or not b.apple_library_id:
-            continue
-        if a.id in seen_ids or b.id in seen_ids:
-            continue
-        seen_pairs.add(pair_key)
-        seen_ids.add(a.id)
-        seen_ids.add(b.id)
-        note_recent_pair(a.id, b.id)
-        selected_pairs.append({"a": _song_payload(a), "b": _song_payload(b)})
-        for song in (a, b):
-            tracks_by_id[song.id] = {
-                "song_id": song.id,
-                "apple_library_id": song.apple_library_id,
-                "type": "library-songs",
-                "title": song.title,
-                "artist": song.album.artist.name if song.album and song.album.artist else "",
-                "album": song.album.title if song.album else "",
-            }
+    active_items = _ensure_comparison_queue(db, pairs)
+    payload = _comparison_queue_payload(active_items[:pairs], db)
     return {
-        "pairs": selected_pairs,
-        "tracks": list(tracks_by_id.values()),
+        "pairs": payload["pairs"],
+        "tracks": payload["tracks"],
         "requested_pairs": pairs,
-        "created_pairs": len(selected_pairs),
-        "attempts": attempts,
+        "created_pairs": payload["created_pairs"],
+        "playlist_name": "MYKMAN Comparisons",
+        "queue_is_canonical": True,
     }
 
 

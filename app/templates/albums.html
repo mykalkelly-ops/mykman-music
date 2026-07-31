@@ -2,6 +2,11 @@
 {% block content %}
 <h1>Albums</h1>
 <p style="color:#888">Derived from song ratings. Unliked songs pull the album down. MYKs can include half-MYKs. Totals use full track counts when known; otherwise they stay unknown instead of pretending the imported subset is the whole album.</p>
+{% if album_total_count and not album_showing_all %}
+<p style="color:#7a5a88; font-size:0.85rem;">Showing top {{ albums|length }} of {{ album_total_count }} albums{% if ep_total_count %} and {{ eps|length }} of {{ ep_total_count }} EPs{% endif %}. <a href="/albums?all=1{% if unknown_first %}&unknown_first=1{% endif %}">Show all</a></p>
+{% elif album_showing_all %}
+<p style="color:#7a5a88; font-size:0.85rem;">Showing all {{ album_total_count }} albums{% if ep_total_count %} and {{ ep_total_count }} EPs{% endif %}. <a href="/albums{% if unknown_first %}?unknown_first=1{% endif %}">Show top slice</a></p>
+{% endif %}
 {% if request.state.is_admin %}
 <div style="margin:0.75rem 0 1rem 0; display:flex; gap:0.5rem; flex-wrap:wrap;">
   {% if unknown_first %}
@@ -9,6 +14,7 @@
   {% else %}
     <a href="/albums?unknown_first=1"><button type="button">Unknown totals first</button></a>
   {% endif %}
+  <a href="/albums?refresh=1{% if unknown_first %}&unknown_first=1{% endif %}"><button type="button">Refresh album scores</button></a>
 </div>
 {% endif %}
 <h2>Albums</h2>

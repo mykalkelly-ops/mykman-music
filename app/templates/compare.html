@@ -17,6 +17,15 @@
 </div>
 <p style="color:#7a5a88; font-size:0.8rem; margin-top:0.75rem;">Click a song to pick the winner. Use the checkboxes inside each card if nostalgia is pulling on one or both songs, then mark whether the overall choice felt easy or hard.</p>
 
+<div class="panel" style="margin-top:1rem;">
+  <div style="display:flex; gap:0.6rem; flex-wrap:wrap; align-items:center;">
+    <strong>Apple Music comparison playlist</strong>
+    <button type="button" id="apple-authorize" {% if not apple_music_configured %}disabled{% endif %}>Authorize</button>
+    <button type="button" id="apple-sync" {% if not apple_music_configured %}disabled{% endif %}>Sync playlist</button>
+  </div>
+  <p id="apple-playlist-status" style="color:#7a5a88; font-weight:700; margin-bottom:0;"></p>
+</div>
+
 <div id="review" class="panel" style="display:none; margin-top:1.5rem;">
   <div style="color:#d33d8f; font-size:0.85rem; text-transform:uppercase; letter-spacing:0.05em;">You love this one ♥</div>
   <div id="review-label" style="font-size:1.3rem; font-weight:600; margin:0.35rem 0 0.6rem 0; font-family:'Caveat',cursive;"></div>
@@ -54,10 +63,15 @@
   <div id="prompt-status" style="display:none; margin-top:0.7rem; color:#d33d8f; font-size:0.85rem;"></div>
 </div>
 
+<script src="https://js-cdn.music.apple.com/musickit/v1/musickit.js"></script>
 <script>
-const STICKY_KEY = 'mykman_queue_v3';
+const STICKY_KEY = 'mykman_queue_v4_canonical';
+const APPLE_PLAYLIST_ID_KEY = 'mykman_comparison_playlist_id_v1';
+const APPLE_PLAYLIST_NAME = 'MYKMAN Comparisons';
 const PROMPT_SKIP_KEY = 'mykman_artist_prompt_recent_v1';
 let queue = [];
+let appleDeveloperToken = null;
+let appleMusicConfigured = false;
 
 function getRecentPromptIds() {
   try {
@@ -229,7 +243,17 @@ async function resolve(idx, choice) {
     }
     pair.resolved = true;
     saveQueue();
-    renderQueue();
+    const data = await resp.json();
+    if (data.queue && Array.isArray(data.queue.pairs)) {
+      queue = normalizeQueuePairs(data.queue.pairs);
+      saveQueue();
+      renderQueue();
+    } else {
+      await loadQueue(true);
+    }
+    if (shouldAutoSyncAppleMusic()) {
+      syncComparisonPlaylist('Comparison saved. Syncing Apple Music playlist...');
+    }
     refreshCount();
   } catch (e) {
     status.textContent = 'Comparison did not save. Check the connection and try again.';
@@ -248,19 +272,6 @@ async function refreshCount() {
 
 async function loadQueue(forceNew = false) {
   document.getElementById('save-status').textContent = '';
-  if (!forceNew) {
-    const saved = localStorage.getItem(STICKY_KEY);
-    if (saved) {
-      try {
-        queue = dedupeQueue(JSON.parse(saved));
-        if (queue.length && queue.some(p => !p.resolved)) {
-          renderQueue();
-          refreshCount();
-          return;
-        }
-      } catch (e) {}
-    }
-  }
   const n = Number(document.getElementById('queue-size').value || 4);
   const r = await fetch('/api/next-pairs?n=' + n);
   if (!r.ok) {
@@ -268,14 +279,202 @@ async function loadQueue(forceNew = false) {
     return;
   }
   const data = await r.json();
-  queue = dedupeQueue((data.pairs || []).map(p => ({ ...p, resolved: false, nostalgiaA: false, nostalgiaB: false, difficulty: null })));
+  queue = normalizeQueuePairs(data.pairs || []);
   saveQueue();
   document.getElementById('count').textContent = `${data.total_comparisons} comparisons so far`;
   renderQueue();
 }
 
+function normalizeQueuePairs(pairs) {
+  return dedupeQueue((pairs || []).map(p => ({
+    ...p,
+    resolved: false,
+    nostalgiaA: false,
+    nostalgiaB: false,
+    difficulty: null
+  })));
+}
+
+function setApplePlaylistStatus(message) {
+  document.getElementById('apple-playlist-status').textContent = message || '';
+}
+
+function shouldAutoSyncAppleMusic() {
+  try {
+    return !!(appleMusicConfigured && window.MusicKit && MusicKit.getInstance().musicUserToken);
+  } catch (e) {
+    return false;
+  }
+}
+
+function responseData(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value.data)) return value.data;
+  if (value.data && Array.isArray(value.data.data)) return value.data.data;
+  return [];
+}
+
+async function appleDeveloperTokenForCompare() {
+  if (appleDeveloperToken) return appleDeveloperToken;
+  const r = await fetch('/api/apple-music/developer-token', {method: 'POST'});
+  const data = await r.json();
+  if (!r.ok || !data.token) throw new Error(data.error || 'Could not generate Apple developer token');
+  appleDeveloperToken = data.token;
+  return appleDeveloperToken;
+}
+
+async function configureAppleMusicForCompare() {
+  const token = await appleDeveloperTokenForCompare();
+  if (!window.MusicKit) throw new Error('MusicKit JS did not load');
+  if (!appleMusicConfigured) {
+    MusicKit.configure({
+      developerToken: token,
+      app: {name: 'MYKMAN Music', build: 'comparison-playlist'}
+    });
+    appleMusicConfigured = true;
+  }
+  return MusicKit.getInstance();
+}
+
+async function authorizeAppleMusicForCompare() {
+  try {
+    const music = await configureAppleMusicForCompare();
+    if (!music.musicUserToken) await music.authorize();
+    setApplePlaylistStatus('Apple Music authorized.');
+    await syncComparisonPlaylist('Apple Music authorized. Syncing comparison playlist...');
+  } catch (error) {
+    setApplePlaylistStatus(String(error && (error.message || error)));
+  }
+}
+
+async function appleMusicRequest(path, options = {}) {
+  const music = await configureAppleMusicForCompare();
+  if (!music.musicUserToken) throw new Error('Authorize Apple Music first.');
+  const token = await appleDeveloperTokenForCompare();
+  const response = await fetch(`https://api.music.apple.com${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Music-User-Token': music.musicUserToken,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch (e) {}
+  return {response, payload, text};
+}
+
+function activeAppleTracks() {
+  const tracks = [];
+  const seen = new Set();
+  for (const pair of queue || []) {
+    for (const song of [pair.a, pair.b]) {
+      if (!song || !song.apple_library_id || seen.has(song.apple_library_id)) continue;
+      seen.add(song.apple_library_id);
+      tracks.push({id: song.apple_library_id, type: 'library-songs', title: song.title});
+    }
+  }
+  return tracks;
+}
+
+async function findComparisonPlaylistId() {
+  const saved = localStorage.getItem(APPLE_PLAYLIST_ID_KEY);
+  if (saved) return saved;
+  const {response, payload} = await appleMusicRequest('/v1/me/library/playlists?limit=100');
+  if (!response.ok) throw new Error(`Could not fetch Apple Music playlists (${response.status})`);
+  const found = responseData(payload).find((playlist) => {
+    const attrs = playlist.attributes || {};
+    return attrs.name === APPLE_PLAYLIST_NAME;
+  });
+  if (found && found.id) {
+    localStorage.setItem(APPLE_PLAYLIST_ID_KEY, found.id);
+    return found.id;
+  }
+  return null;
+}
+
+async function ensureComparisonPlaylistId() {
+  const existing = await findComparisonPlaylistId();
+  if (existing) return existing;
+  const tracks = activeAppleTracks();
+  const body = {
+    attributes: {
+      name: APPLE_PLAYLIST_NAME,
+      description: 'Rotating MYKMAN comparison queue.',
+      isPublic: false
+    },
+    relationships: {
+      tracks: {data: tracks.map((track) => ({id: track.id, type: track.type}))}
+    }
+  };
+  const {response, payload, text} = await appleMusicRequest('/v1/me/library/playlists', {
+    method: 'POST',
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error(`Could not create Apple Music playlist (${response.status})`);
+  const created = responseData(payload)[0] || (payload && payload.data && payload.data[0]);
+  const id = created && created.id;
+  if (!id) throw new Error(text || 'Apple Music did not return a playlist ID');
+  localStorage.setItem(APPLE_PLAYLIST_ID_KEY, id);
+  return id;
+}
+
+async function currentPlaylistTrackIds(playlistId) {
+  const {response, payload} = await appleMusicRequest(`/v1/me/library/playlists/${encodeURIComponent(playlistId)}?include=tracks`);
+  if (!response.ok) return [];
+  const playlist = responseData(payload)[0] || (payload && payload.data && payload.data[0]);
+  const tracks = playlist && playlist.relationships && playlist.relationships.tracks && playlist.relationships.tracks.data;
+  return Array.isArray(tracks) ? tracks.map((track) => track.id).filter(Boolean) : [];
+}
+
+async function addTracksToComparisonPlaylist(playlistId, tracks) {
+  if (!tracks.length) return true;
+  const {response} = await appleMusicRequest(`/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks`, {
+    method: 'POST',
+    body: JSON.stringify({data: tracks.map((track) => ({id: track.id, type: track.type}))})
+  });
+  return response.ok;
+}
+
+async function removeTracksFromComparisonPlaylist(playlistId, trackIds) {
+  if (!trackIds.length) return true;
+  const {response} = await appleMusicRequest(`/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks`, {
+    method: 'DELETE',
+    body: JSON.stringify({data: trackIds.map((id) => ({id, type: 'library-songs'}))})
+  });
+  return response.ok;
+}
+
+async function syncComparisonPlaylist(prefix = 'Syncing Apple Music playlist...') {
+  try {
+    if (!queue.length) return;
+    setApplePlaylistStatus(prefix);
+    const playlistId = await ensureComparisonPlaylistId();
+    const wantedTracks = activeAppleTracks();
+    const wantedIds = new Set(wantedTracks.map((track) => track.id));
+    const existingIds = await currentPlaylistTrackIds(playlistId);
+    const existingSet = new Set(existingIds);
+    const staleIds = existingIds.filter((id) => !wantedIds.has(id));
+    const missingTracks = wantedTracks.filter((track) => !existingSet.has(track.id));
+    const removed = await removeTracksFromComparisonPlaylist(playlistId, staleIds);
+    const added = await addTracksToComparisonPlaylist(playlistId, missingTracks);
+    if (!removed) {
+      setApplePlaylistStatus(`Queue synced in MYKMAN. Apple accepted additions${added ? '' : ' failed additions'}, but did not accept track removal from the playlist.`);
+      return;
+    }
+    setApplePlaylistStatus(`Apple Music playlist synced: ${wantedTracks.length} active tracks.`);
+  } catch (error) {
+    setApplePlaylistStatus(String(error && (error.message || error)));
+  }
+}
+
 document.getElementById('refill').onclick = () => loadQueue(true);
 document.getElementById('queue-size').onchange = () => loadQueue(true);
+document.getElementById('apple-authorize').onclick = () => authorizeAppleMusicForCompare();
+document.getElementById('apple-sync').onclick = () => syncComparisonPlaylist();
 document.getElementById('undo').onclick = async () => {
   const r = await fetch('/api/undo-last', {method:'POST'});
   if (!r.ok) { alert('Nothing to undo.'); return; }
