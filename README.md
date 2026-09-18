@@ -4,6 +4,13 @@ Local app that ingests an Apple Music library export and will (eventually) produ
 
 For project memory, completed feature history, current product decisions, and new-chat handoff context, start with [`PROJECT_HANDOFF.md`](PROJECT_HANDOFF.md).
 
+For the September 2026 queue/ranking fixes, validation and remaining risks, see
+[`AUDIT_2026-09-18.md`](AUDIT_2026-09-18.md). Run regression tests with
+`python -m unittest discover -s tests -v` after installing `requirements-dev.txt`,
+and `node --test tests/compare-ui.test.cjs` for the comparison-page script.
+For release preparation, database preservation, and a detailed explanation of
+SQL operations, see [`RENDER_DEPLOYMENT.md`](RENDER_DEPLOYMENT.md).
+
 ## What works right now
 
 - Parses `Library.xml` exported from the Mac Music app

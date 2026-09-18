@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session, joinedload
 
 from .db import engine, get_session
@@ -30,7 +30,8 @@ from .auth import (
     is_subscriber, unlock_subscriber, lock_subscriber,
 )
 from .glicko import update_pair
-from .pair_selector import pick_pair, note_recent_pair
+from .pair_selector import note_recent_pair
+from .queue_selection import select_queue_pairs
 from .placement import update_bounds, maybe_finalize
 from .scoring import album_scores, album_score_for, artist_scores, artist_score_for, top_artist_scores, myk_tier, myk_score, render_myks, gender_breakdown, is_rankable_album, classify_release_type, effective_album_total_tracks, _expand_artist_genders, is_various_artists_name
 from .notes import render_markdown, resolve_target, search_notes, search_targets, related_songs_for_note
@@ -505,6 +506,10 @@ def _ctx(request: Request, **extra):
 @app.on_event("startup")
 def on_startup():
     init_db(engine)
+    # Metadata merges can rewrite/delete historical comparisons. Never run
+    # them implicitly during a code deployment; require deliberate opt-in.
+    if os.environ.get("MYKMAN_RUN_STARTUP_REPAIRS") != "1":
+        return
     # Auto-run people backfill on first startup (when persons table is empty)
     from .db import SessionLocal
     db = SessionLocal()
@@ -2478,7 +2483,7 @@ async def kofi_webhook(request: Request, db: Session = Depends(get_session)):
 
     token = payload.get("verification_token", "")
     if not KOFI_VERIFICATION_TOKEN or token != KOFI_VERIFICATION_TOKEN:
-        print(f"[kofi] BAD token attempt: got={token!r}")
+        print("[kofi] rejected invalid verification token")
         raise HTTPException(403, "bad token")
 
     typ = payload.get("type", "")
@@ -3166,6 +3171,10 @@ def _queue_item_payload(item: ComparisonQueueItem, db: Session) -> dict | None:
 
 
 def _comparison_queue_payload(items: list[ComparisonQueueItem], db: Session) -> dict:
+    ids = {sid for item in items for sid in (item.song_a_id, item.song_b_id)}
+    # Strong references let Session.get reuse these eager-loaded rows.
+    songs = {song.id: song for song in db.query(Song).options(
+        joinedload(Song.album).joinedload(Album.artist)).filter(Song.id.in_(ids)).all()} if ids else {}
     pairs = []
     tracks_by_song_id: dict[int, dict] = {}
     for item in items:
@@ -3176,7 +3185,7 @@ def _comparison_queue_payload(items: list[ComparisonQueueItem], db: Session) -> 
         for side in ("a", "b"):
             song_payload = payload[side]
             if song_payload.get("apple_library_id"):
-                song = db.get(Song, song_payload["id"])
+                song = songs.get(song_payload["id"])
                 if song is not None:
                     tracks_by_song_id[song.id] = _queue_track_payload(song)
     return {
@@ -3187,33 +3196,35 @@ def _comparison_queue_payload(items: list[ComparisonQueueItem], db: Session) -> 
 
 
 def _ensure_comparison_queue(db: Session, target_pairs: int = COMPARISON_QUEUE_DEFAULT_PAIRS) -> list[ComparisonQueueItem]:
+    # SQLAlchemy autobegins on SELECT, but SQLite's legacy transaction mode
+    # does not. Check the actual connection, including after post-vote reads.
+    if not db.connection().connection.driver_connection.in_transaction:
+        db.execute(text("BEGIN IMMEDIATE"))
     target_pairs = max(1, min(int(target_pairs or COMPARISON_QUEUE_DEFAULT_PAIRS), COMPARISON_QUEUE_MAX_PAIRS))
     active_items = _active_comparison_queue(db)
+    valid_ids = {sid for (sid,) in db.query(Song.id).all()}
+    active_ids = {sid for item in active_items for sid in (item.song_a_id, item.song_b_id)}
+    compared = {_comparison_pair_key(a, b) for a, b in db.query(
+        Comparison.song_a_id, Comparison.song_b_id).filter(
+        Comparison.song_a_id.in_(active_ids), Comparison.song_b_id.in_(active_ids)).all()} if active_ids else set()
+    for item in active_items:
+        if (item.song_a_id not in valid_ids or item.song_b_id not in valid_ids
+                or item.song_a_id == item.song_b_id
+                or _comparison_pair_key(item.song_a_id, item.song_b_id) in compared):
+            item.status = "stale"
+            item.completed_at = datetime.utcnow()
+    active_items = [item for item in active_items if item.status == "active"]
     active_pair_keys = {_comparison_pair_key(item.song_a_id, item.song_b_id) for item in active_items}
     active_song_ids = {sid for item in active_items for sid in (item.song_a_id, item.song_b_id)}
-    attempts = 0
-    max_attempts = max(120, target_pairs * 40)
-
-    while len(active_items) < target_pairs and attempts < max_attempts:
-        attempts += 1
-        pair = pick_pair(db)
-        if pair is None:
-            break
-        a, b = pair
-        if not a.apple_library_id or not b.apple_library_id:
-            continue
-        pair_key = _comparison_pair_key(a.id, b.id)
-        if pair_key in active_pair_keys:
-            continue
-        if a.id in active_song_ids or b.id in active_song_ids:
-            continue
-
+    missing = max(0, target_pairs - len(active_items))
+    pairs = select_queue_pairs(db, missing, active_song_ids, active_pair_keys) if missing else []
+    for a, b in pairs:
         item = ComparisonQueueItem(song_a_id=a.id, song_b_id=b.id, status="active")
         db.add(item)
         db.flush()
         note_recent_pair(a.id, b.id)
         active_items.append(item)
-        active_pair_keys.add(pair_key)
+        active_pair_keys.add(_comparison_pair_key(a.id, b.id))
         active_song_ids.add(a.id)
         active_song_ids.add(b.id)
 
@@ -3416,11 +3427,17 @@ class CompareBody(BaseModel):
     winner_id: int | None  # null = skip/tie
     difficulty: str | None = None
     nostalgia: bool = False
+    skip: bool = False
+    queue_size: int = 4
 
 
 @app.post("/api/compare")
 def submit_comparison(body: CompareBody, request: Request, db: Session = Depends(get_session)):
     require_admin(request)
+    # Serialize SQLite writers before checking for a retried/double-clicked vote.
+    db.execute(text("BEGIN IMMEDIATE"))
+    if body.song_a_id == body.song_b_id:
+        raise HTTPException(400, "choose two different songs")
     a = db.get(Song, body.song_a_id)
     b = db.get(Song, body.song_b_id)
     if a is None or b is None:
@@ -3430,6 +3447,28 @@ def submit_comparison(body: CompareBody, request: Request, db: Session = Depends
     if body.difficulty not in (None, "easy", "hard"):
         raise HTTPException(400, "difficulty must be easy, hard, or null")
 
+    if body.skip:
+        if body.winner_id is not None:
+            raise HTTPException(400, "a skip cannot have a winner")
+        item = _complete_comparison_queue_item(db, a.id, b.id)
+        if item:
+            item.status = "skipped"
+        note_recent_pair(a.id, b.id)
+        db.commit()
+        active = _ensure_comparison_queue(db, max(1, min(body.queue_size, 8)))
+        return {"queue": _comparison_queue_payload(active[:max(1, min(body.queue_size, 8))], db)}
+
+    existing = db.query(Comparison.id).filter(
+        ((Comparison.song_a_id == a.id) & (Comparison.song_b_id == b.id)) |
+        ((Comparison.song_a_id == b.id) & (Comparison.song_b_id == a.id))
+    ).first()
+    if existing:
+        raise HTTPException(409, "this pair has already been compared; reload the queue")
+
+    # Placement bounds must use the opponents' pre-vote ratings on both sides.
+    from types import SimpleNamespace
+    old_a = SimpleNamespace(glicko_rating=a.glicko_rating)
+    old_b = SimpleNamespace(glicko_rating=b.glicko_rating)
     _apply_comparison_modifiers(a, b, body.winner_id, body.difficulty, body.nostalgia)
     a.comparison_count = (a.comparison_count or 0) + 1
     b.comparison_count = (b.comparison_count or 0) + 1
@@ -3439,23 +3478,22 @@ def submit_comparison(body: CompareBody, request: Request, db: Session = Depends
     if body.winner_id is not None:
         a_won = body.winner_id == a.id
         if a.placement_pending:
-            update_bounds(a, b, a_won)
+            update_bounds(a, old_b, a_won)
             maybe_finalize(a)
         if b.placement_pending:
-            update_bounds(b, a, not a_won)
+            update_bounds(b, old_a, not a_won)
             maybe_finalize(b)
 
-    db.add(
-        Comparison(
+    saved = Comparison(
             song_a_id=a.id,
             song_b_id=b.id,
             winner_id=body.winner_id,
             difficulty=body.difficulty,
             nostalgia=body.nostalgia,
         )
-    )
+    db.add(saved)
+    completed_queue_item = _complete_comparison_queue_item(db, a.id, b.id)
     db.commit()
-    saved = db.query(Comparison).order_by(Comparison.id.desc()).first()
     if saved is not None:
         append_event(
             {
@@ -3472,9 +3510,9 @@ def submit_comparison(body: CompareBody, request: Request, db: Session = Depends
 
     # Anti-repeat tracking
     note_recent_pair(a.id, b.id)
-    completed_queue_item = _complete_comparison_queue_item(db, a.id, b.id)
-    active_items = _ensure_comparison_queue(db, COMPARISON_QUEUE_DEFAULT_PAIRS)
-    queue_payload = _comparison_queue_payload(active_items, db)
+    queue_size = max(1, min(body.queue_size, 8))
+    active_items = _ensure_comparison_queue(db, queue_size)
+    queue_payload = _comparison_queue_payload(active_items[:queue_size], db)
     invalidate_artist_scores_cache()
 
     return {

@@ -2,9 +2,14 @@
 {% block title %}Library Import - MYKMAN Music{% endblock %}
 {% block content %}
 <h1>Library Import</h1>
+<section class="panel">
+  <h2>Sync directly from Apple Music</h2>
+  <p>Update your monthly playlists from your browser without a MacBook or XML export.</p>
+  <a href="/apple-music">Connect Apple Music and preview updates</a>
+</section>
 
 <section class="panel">
-  <h2 style="margin-top:0;">Update the live library</h2>
+  <h2 style="margin-top:0;">Optional XML import</h2>
   <p style="color:#7a5a88;">Upload the Apple Music <code>Library.xml</code> export. The importer will snapshot the DB and export comparisons before it changes data.</p>
   <input id="library-file" type="file" accept=".xml,text/xml,application/xml">
   <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:1rem;">

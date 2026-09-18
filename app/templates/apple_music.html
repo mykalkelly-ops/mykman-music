@@ -2,10 +2,17 @@
 {% block title %}Apple Music - MYKMAN Music{% endblock %}
 {% block content %}
 <h1>Apple Music</h1>
+<section class="panel">
+  <h2 style="margin-top:0;">Update your music without a MacBook</h2>
+  <p>Connect your Apple Music account, preview your monthly playlists, then import the updates here. No Library.xml export is needed.</p>
+  <button type="button" onclick="connectAndPreview()" {% if not configured %}disabled{% endif %}>Connect and preview updates</button>
+  <button type="button" onclick="importMonthPlaylistSync()" {% if not configured %}disabled{% endif %}>Import previewed updates</button>
+  <p>This sync imports songs from playlists named Month YYYY. It preserves existing comparisons and play/skip counts. It does not import every library song or refresh lifetime listening counts. Your playlists must be available in your Apple Music cloud library.</p>
+</section>
 
 <section class="panel">
   <h2 style="margin-top:0;">Credential status</h2>
-  <p style="color:#7a5a88;">This page is for the Apple Music API path that will eventually replace manual MacBook Library.xml updates.</p>
+  <p style="color:#7a5a88;">One-time setup: configure an Apple Music developer key on the server, then authorize your account in this browser.</p>
   <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
     <div class="stat"><div class="num">{{ "yes" if team_id_set else "no" }}</div><div class="label">Team ID</div></div>
     <div class="stat"><div class="num">{{ "yes" if key_id_set else "no" }}</div><div class="label">Key ID</div></div>
@@ -43,7 +50,7 @@
 </section>
 
 <section class="panel">
-  <h2 style="margin-top:0;">Rotating comparison playlist</h2>
+  <h2 style="margin-top:0;">Comparison listening playlist</h2>
   <p style="color:#7a5a88;">Create or preview the same comparison queue shown on the Compare page. The active queue is the source of truth.</p>
   <label style="color:#7a5a88;">Pairs:
     <select id="weekly-pair-count">
@@ -55,7 +62,7 @@
   </label>
   <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:0.75rem;">
     <button type="button" onclick="previewWeeklyComparisonPlaylist()" {% if not configured %}disabled{% endif %}>Preview comparison queue</button>
-    <button type="button" onclick="createWeeklyComparisonPlaylist()" {% if not configured %}disabled{% endif %}>Create rotating playlist</button>
+    <a href="/compare">Manage the comparison playlist</a>
   </div>
   <p id="weekly-status" style="color:#7a5a88; font-weight:700;"></p>
   <pre id="weekly-output" style="display:none; white-space:pre-wrap; word-break:break-word;"></pre>
@@ -66,16 +73,18 @@
   <ol style="color:#7a5a88; line-height:1.6;">
     <li>Authorize Apple Music and confirm library playlist access.</li>
     <li>Fetch only playlists named <code>Month YYYY</code> first.</li>
-    <li>Compare Apple API playlist totals against the current <code>Library.xml</code> import.</li>
+    <li>Preview new songs and playlists against your saved MYKMAN library.</li>
     <li>Create a fresh comparison export and DB snapshot.</li>
-    <li>Add conservative DB writes only after the read-only diff looks right.</li>
+    <li>Import the previewed updates. Existing songs and comparisons are retained.</li>
   </ol>
 </section>
 
 <script src="https://js-cdn.music.apple.com/musickit/v1/musickit.js"></script>
 <script>
 let developerToken = null;
+let developerTokenAt = 0;
 let musicConfigured = false;
+let syncBusy = false;
 let lastMonthPlaylistPayload = null;
 let lastWeeklyPlaylistPayload = null;
 const COMPARISON_PLAYLIST_ID_KEY = 'mykman_comparison_playlist_id_v1';
@@ -169,6 +178,7 @@ async function generateToken(showToken = false) {
     return;
   }
   developerToken = data.token || '';
+  developerTokenAt = Date.now();
   status.textContent = `Generated for ${data.origin || window.location.origin}. Expires in ${data.ttl_seconds || 3600} seconds.`;
   if (showToken) {
     output.textContent = developerToken;
@@ -226,6 +236,7 @@ async function unauthorizeMusicKit() {
     const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
     if (!music) return;
     await music.unauthorize();
+    lastMonthPlaylistPayload = null;
     setMusicStatus('MusicKit signed out.');
     showMusicOutput({authorized: false});
   } catch (error) {
@@ -296,20 +307,50 @@ async function fetchLibraryPlaylistsDirect() {
 }
 
 async function fetchPlaylistTracks(music, playlistId) {
-  const response = await music.api.library.playlist(playlistId, {include: 'tracks'});
-  const data = responseData(response);
-  const playlist = data[0] || (response && response.data && response.data[0]) || response;
-  const tracksRelationship = playlist && playlist.relationships && playlist.relationships.tracks;
-  return tracksRelationship && Array.isArray(tracksRelationship.data) ? tracksRelationship.data : [];
+  return fetchAllLibraryPages(`/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks`, music);
+}
+
+async function fetchAllLibraryPages(path, music) {
+  if (!music.musicUserToken) throw new Error('Connect your Apple Music account first.');
+  const rows = [], visited = new Set();
+  while (path) {
+    if (!path.startsWith('/v1/me/library/') || visited.has(path)) throw new Error('Invalid library pagination response. Please retry the preview.');
+    visited.add(path);
+    const token = developerToken && Date.now() - developerTokenAt < 50 * 60 * 1000 ? developerToken : await generateToken(false);
+    if (!token) throw new Error('Could not authorize the library request.');
+    const response = await fetch(`https://api.music.apple.com${path}`, {headers: {
+      Authorization: `Bearer ${token}`, 'Music-User-Token': music.musicUserToken
+    }});
+    if (!response.ok) throw new Error(`Apple Music could not read the library (${response.status}). No partial preview will be imported.`);
+    const payload = await response.json();
+    if (!Array.isArray(payload.data)) throw new Error('Apple Music returned an incomplete library response.');
+    rows.push(...payload.data);
+    path = payload.next || null;
+  }
+  return rows;
+}
+
+async function connectAndPreview() {
+  try {
+    const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
+    if (!music) return;
+    if (!music.musicUserToken) await music.authorize();
+    await previewMonthPlaylistSync();
+  } catch (error) {
+    lastMonthPlaylistPayload = null;
+    setMusicStatus(error.message || 'Could not connect to Apple Music.');
+  }
 }
 
 async function previewMonthPlaylistSync() {
+  if (syncBusy) return;
+  syncBusy = true;
+  lastMonthPlaylistPayload = null;
   try {
     const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
     if (!music) return;
     setMusicStatus('Fetching Month YYYY playlists...');
-    const playlistResults = await music.api.library.playlists({limit: 100, offset: 0});
-    const playlists = responseData(playlistResults);
+    const playlists = await fetchAllLibraryPages('/v1/me/library/playlists?limit=100', music);
     const monthRows = monthPlaylistRows(playlists);
     if (!monthRows.length) {
       setMusicStatus('No Month YYYY playlists found.');
@@ -326,7 +367,6 @@ async function previewMonthPlaylistSync() {
       const tracks = await fetchPlaylistTracks(music, row.id);
       payload.push(compactPlaylist(playlist, tracks));
     }
-    lastMonthPlaylistPayload = payload;
 
     setMusicStatus('Comparing Apple Music data against MYKMAN DB...');
     const previewResponse = await fetch('/api/apple-music/sync-preview', {
@@ -340,11 +380,14 @@ async function previewMonthPlaylistSync() {
       showMusicOutput(preview);
       return;
     }
+    lastMonthPlaylistPayload = payload;
     setMusicStatus(`Previewed ${preview.playlist_count} playlists and ${preview.total_playlist_tracks} playlist tracks. No DB writes were made.`);
     showMusicOutput(preview);
   } catch (error) {
     setMusicStatus('Month playlist sync preview failed.');
     showMusicOutput({error: String(error && (error.message || error))});
+  } finally {
+    syncBusy = false;
   }
 }
 
@@ -479,6 +522,8 @@ async function createWeeklyComparisonPlaylist() {
 }
 
 async function importMonthPlaylistSync() {
+  if (syncBusy) return;
+  syncBusy = true;
   try {
     if (!lastMonthPlaylistPayload || !lastMonthPlaylistPayload.length) {
       setMusicStatus('Run Preview Month playlist sync first.');
@@ -507,10 +552,13 @@ async function importMonthPlaylistSync() {
       return;
     }
     setMusicStatus('Apple Music import complete. Safety snapshot and comparison export were created first.');
+    lastMonthPlaylistPayload = null;
     showMusicOutput(payload);
   } catch (error) {
     setMusicStatus('Apple Music import failed.');
     showMusicOutput({error: String(error && (error.message || error))});
+  } finally {
+    syncBusy = false;
   }
 }
 </script>

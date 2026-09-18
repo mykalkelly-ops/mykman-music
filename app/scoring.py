@@ -14,7 +14,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from markupsafe import Markup
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .models import Artist, Album, Song, PlaylistSong, SongCredit, ArtistMembership, Person, DEFAULT_RD
 from .canonical import canonical_key, linked_song_groups, normalize_title
@@ -145,7 +145,7 @@ def is_rankable_album(album: Album) -> bool:
 
 def classify_release_type(album: Album) -> str:
     title = (album.title or "").lower()
-    if (album.release_group_type or "").lower() == "ep" or "ep" in title:
+    if (album.release_group_type or "").lower() == "ep" or re.search(r"\bep\b", title):
         return "ep"
     total_tracks = effective_album_total_tracks(album) or 0
     if "single" in title or (total_tracks and total_tracks <= 3):
@@ -282,7 +282,7 @@ def album_scores(db: Session) -> list[AlbumScore]:
     liked_ids = {sid for (sid,) in db.query(PlaylistSong.song_id).distinct().all()}
     results: list[AlbumScore] = []
     groups: dict[tuple[int, str], list[Album]] = defaultdict(list)
-    for album in db.query(Album).options(joinedload(Album.artist), joinedload(Album.songs)).all():
+    for album in db.query(Album).options(joinedload(Album.artist), selectinload(Album.songs), selectinload(Album.tracks)).all():
         groups[_album_family_key(album)].append(album)
     for albums in groups.values():
         row = _album_score_rows(albums, liked_ids)
@@ -566,7 +566,7 @@ def artist_scores(db: Session) -> list[ArtistScore]:
     for parent_id, child_id in db.query(ArtistMembership.artist_id, ArtistMembership.child_artist_id).filter(ArtistMembership.child_artist_id.isnot(None)).all():
         collab_child_ids_by_artist[parent_id].add(child_id)
     results: list[ArtistScore] = []
-    artists = db.query(Artist).options(joinedload(Artist.albums).joinedload(Album.songs)).all()
+    artists = db.query(Artist).options(selectinload(Artist.albums).selectinload(Album.songs), selectinload(Artist.albums).selectinload(Album.tracks)).all()
     for artist in artists:
         row = _artist_score_row(
             db,
