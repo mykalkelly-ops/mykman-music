@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Your listening queue</h1>
+<p>Saved progress survives changes to your phone downloads. <a href="/apple-music">Scan and save Apple Music library</a> · <a href="/api/listening/export">Download progress backup</a> · <a href="/listen-next">Earlier listen-next list</a></p>
+<p>{{ track_count }} library tracks saved. Recent playback is evidence only; completion comes from your decisions. Artist and album actions apply to their saved library tracks. The most recent decision wins. This inventory may not contain a complete discography.</p>
+<p id="listening-status" role="status"></p>
+<section class="panel">
+<h2>Up next</h2>
+{% if next_track %}
+<p><strong>Next unfinished saved track:</strong> {{ next_track.artist }} — {{ next_track.album }} — {{ next_track.title }}</p>
+<p>This follows your chosen queue and album track order. Unknown tracks may include songs you have already heard.</p>
+<a href="https://music.apple.com/us/search?term={{ (next_track.artist ~ ' ' ~ next_track.title)|urlencode }}" target="_blank" rel="noopener">Find in Apple Music</a>
+<button data-key="{{ next_track.key }}" data-action="in_progress">Start / resume this song</button>
+<button data-key="{{ next_track.key }}" data-action="complete">Finished this song</button>
+{% endif %}
+{% if queue %}
+{% for item in queue %}
+<div data-queue-item style="margin-bottom:1rem">
+<a href="/listening?q={{ targets[item.artist_key].label|urlencode }}">{{ item.label }}</a> ({{ item.type }})
+{% if loop.first %}<strong>— Start here</strong>{% endif %}
+{% if item.note %}<p>{{ item.note }}</p>{% endif %}
+<label>Resume note <input class="resume-note" value="{{ item.note }}" placeholder="Where you stopped, or what comes next"></label>
+<button data-key="{{ item.key }}" data-action="note">Save note</button>
+<button data-key="{{ item.key }}" data-action="top">Move to top</button>
+<button data-key="{{ item.key }}" data-action="in_progress">Listening now</button>
+<button data-key="{{ item.key }}" data-action="complete">Finished</button>
+<button data-key="{{ item.key }}" data-action="remove">Remove from queue</button>
+</div>
+{% endfor %}
+{% else %}<p>No saved next listen yet. Find an artist below and queue an artist, album, or song.</p>{% endif %}
+</section>
+<form method="get"><label>Find an artist <input name="q" value="{{ q }}" placeholder="Artist name"></label><button>Find</button></form>
+{% if not track_count %}<p>Start with a full library scan on the Apple Music page, then choose Save inventory.</p>{% endif %}
+<p>{% for artist in matches %}<a style="margin-right:1rem" href="/listening?q={{ artist.name|urlencode }}">{{ artist.name }} ({{ 'needs review' if artist.needs_review else artist.status|replace('_',' ') }}; {{ artist.heard }}/{{ artist.total }})</a>{% endfor %}</p>
+{% macro controls(key, status) %}
+<span>{{ status|replace('_', ' ') }}</span>
+<button data-key="{{ key }}" data-action="top">Queue next</button>
+<button data-key="{{ key }}" data-action="in_progress">In progress</button>
+<button data-key="{{ key }}" data-action="complete">Finished</button>
+<button data-key="{{ key }}" data-action="unheard">Unheard</button>
+<button data-key="{{ key }}" data-action="unknown">Reset to unknown</button>
+{% endmacro %}
+{% if selected %}
+<section class="panel"><h2>{{ selected.name }}</h2>
+{% if selected.needs_review %}<p>There are saved tracks to review after your completion decision.</p>{% endif %}
+<p>“Finished” confirms you are caught up with this artist as you know them. New releases need review.</p>
+{{ controls(selected.key, selected.status) }}
+{% for album in selected.albums %}
+<details style="margin-top:1.5rem" {% if selected.albums|length == 1 %}open{% endif %}>
+<summary>{{ album.title }} — {{ album.heard }}/{{ album.tracks|length }} saved tracks heard</summary>
+{{ controls(album.key, album.status) }}
+<table><thead><tr><th>Track</th><th>Song</th><th>Progress</th></tr></thead><tbody>
+{% for track in album.tracks %}
+<tr><td>{{ track.disc or '' }}.{{ track.track or '' }}</td><td>{{ track.title }}{% if track.recent %}<br><small>Recent playback recorded</small>{% endif %}</td><td>{{ controls(track.key, track.status) }}</td></tr>
+{% endfor %}
+</tbody></table></details>
+{% endfor %}</section>
+{% endif %}
+<script>
+document.addEventListener('click', async event => {
+  const button = event.target.closest('button[data-key]');
+  if (!button) return;
+  const action = button.dataset.action;
+  const body = {key:button.dataset.key};
+  if (action === 'top' || action === 'remove') body.queue = action;
+  else if (action === 'note') body.note = button.closest('[data-queue-item]').querySelector('.resume-note').value;
+  else body.status = action;
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/listening/progress', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    if (!response.ok) throw new Error('Progress could not be saved. Please retry.');
+    window.location.reload();
+  } catch(error) {
+    document.getElementById('listening-status').textContent = error.message;
+    button.disabled = false;
+  }
+});
+</script>
+{% endblock %}

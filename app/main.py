@@ -56,6 +56,8 @@ from .paths import data_dir
 from .apple_music import get_config as get_apple_music_config, generate_developer_token
 
 app = FastAPI(title="MYKMAN Music")
+from .listening import router as listening_router
+app.include_router(listening_router)
 
 ARTIST_SCORES_CACHE_TTL_SECONDS = 300
 ARTIST_SCORES_CACHE: dict[str, object] = {"created_at": 0.0, "rows": None}

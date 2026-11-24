@@ -4,6 +4,33 @@ Last updated: 2026-04-20
 
 This file is the quick context dump for starting a new Codex/Claude/chat session in this repo. Read this before making changes.
 
+## November 2026 listening recovery (local, not deployed)
+
+China phone download loss erased Mykal's implicit queue. He removed downloads,
+not library entries, sometimes after a song and sometimes after a whole album.
+Listening was only sometimes chronological. Use the Apple API; do not request
+an iTunes/XML export. Do not infer completion from download/library membership.
+
+`app/listening.py` and `/listening` provide explicit song/album/artist progress,
+a persistent priority queue, resume notes, next unfinished track suggestions,
+and JSON backup export. Separate additive `listening_tracks` and
+`listening_progress` tables avoid changing ranking eligibility or comparisons.
+The Apple Music page scans every library-song page and available recent-track
+history, then explicitly saves the inventory. See `APPLE_SYNC.md` for behavior.
+
+These edits have not been deployed or used against the live Apple account.
+The active session's `.git` is read-only, preventing commit/push. Before any
+release, back up and verify the current Render DB; never replace it with local
+data. Startup creates the two new tables. A migration check on a temporary
+local database copy preserved 400 comparison rows and 18,271 song rows exactly.
+Account recovery still needs a live scan and review of uncertain progress;
+neither lifetime history nor pre-loss download state has been recovered.
+
+Validation: listening service/route/template tests, mocked Apple API JavaScript
+tests, and ranking regression tests. The existing HTTP TestClient test cannot
+run in this session because the Windows asyncio socketpair blocks in accept;
+do not claim live HTTP or Apple authorization verification.
+
 ## Core Vision
 
 MYKMAN Music is a living memoir through music and data.

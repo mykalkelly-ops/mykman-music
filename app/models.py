@@ -12,6 +12,31 @@ DEFAULT_RD = 350.0
 DEFAULT_VOL = 0.06
 
 
+class ListeningTrack(Base):
+    """Cloud inventory kept separate from the ranking universe."""
+    __tablename__ = "listening_tracks"
+    library_id = Column(String, primary_key=True)
+    catalog_id = Column(String, nullable=True, index=True)
+    artist = Column(String, nullable=False, index=True)
+    album = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    disc = Column(Integer, nullable=True)
+    track = Column(Integer, nullable=True)
+    first_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    recent_evidence_at = Column(DateTime, nullable=True)
+
+
+class ListeningProgress(Base):
+    __tablename__ = "listening_progress"
+    target_key = Column(String, primary_key=True)
+    target_type = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="unknown")
+    updated_at = Column(DateTime, nullable=True)
+    queued_at = Column(DateTime, nullable=True, index=True)
+    note = Column(String, nullable=True)
+
+
 class Artist(Base):
     __tablename__ = "artists"
     id = Column(Integer, primary_key=True)

@@ -3,6 +3,15 @@
 {% block content %}
 <h1>Apple Music</h1>
 <section class="panel">
+  <h2 style="margin-top:0;">Recover your listening queue</h2>
+  <p>Read your entire cloud library, including music outside monthly playlists. Downloads are not used to infer listening progress. This preview does not change your library, rankings, or saved queue.</p>
+  <button id="recovery-button" type="button" onclick="previewListeningRecovery()" {% if not configured %}disabled{% endif %}>Scan full library</button>
+  <button id="recovery-save" type="button" onclick="saveListeningRecovery()" disabled>Save inventory and open queue</button>
+  <p id="recovery-status" role="status"></p>
+  <p>Listening completion stays unknown until confirmed. Library membership alone does not establish what you have heard.</p>
+  <pre id="recovery-output" style="display:none; white-space:pre-wrap; max-height:28rem; overflow:auto;"></pre>
+</section>
+<section class="panel">
   <h2 style="margin-top:0;">Update your music without a MacBook</h2>
   <p>Connect your Apple Music account, preview your monthly playlists, then import the updates here. No Library.xml export is needed.</p>
   <button type="button" onclick="connectAndPreview()" {% if not configured %}disabled{% endif %}>Connect and preview updates</button>
@@ -237,6 +246,8 @@ async function unauthorizeMusicKit() {
     if (!music) return;
     await music.unauthorize();
     lastMonthPlaylistPayload = null;
+    recoveryInventory = null;
+    document.getElementById('recovery-save').disabled = true;
     setMusicStatus('MusicKit signed out.');
     showMusicOutput({authorized: false});
   } catch (error) {
@@ -310,11 +321,96 @@ async function fetchPlaylistTracks(music, playlistId) {
   return fetchAllLibraryPages(`/v1/me/library/playlists/${encodeURIComponent(playlistId)}/tracks`, music);
 }
 
+let recoveryInventory = null;
+let recoveryBusy = false;
+
+async function previewListeningRecovery() {
+  const button = document.getElementById('recovery-button');
+  const status = document.getElementById('recovery-status');
+  const output = document.getElementById('recovery-output');
+  if (button.disabled) return;
+  recoveryInventory = null;
+  document.getElementById('recovery-save').disabled = true;
+  button.disabled = true;
+  output.textContent = '';
+  output.style.display = 'none';
+  try {
+    const music = musicConfigured ? MusicKit.getInstance() : await configureMusicKit();
+    if (!music) throw new Error('Could not configure Apple Music.');
+    if (!music.musicUserToken) await music.authorize();
+    status.textContent = 'Reading all pages of your Apple Music library…';
+    const songs = await fetchAllLibraryPages('/v1/me/library/songs?limit=100', music);
+    let recent = [], recentWarning = '';
+    try {
+      recent = await fetchAllLibraryPages('/v1/me/recent/played/tracks?types=songs,library-songs&limit=30', music);
+    } catch(error) {
+      recentWarning = ' Recent history was unavailable; the library scan is complete.';
+    }
+    recoveryInventory = {
+      tracks: songs.filter(s => s.id).map(s => {
+        const a = s.attributes || {};
+        return {library_id:s.id, catalog_id:(a.playParams || {}).catalogId || null,
+          artist:a.artistName || 'Unknown Artist', album:a.albumName || 'Unknown Album',
+          title:a.name || 'Unknown Track', disc:a.discNumber || null, track:a.trackNumber || null};
+      }),
+      recent_catalog_ids: recent.filter(s => s.type === 'songs').map(s => s.id),
+      recent_library_ids: recent.filter(s => s.type === 'library-songs').map(s => s.id)
+    };
+    const report = summarizeRecoveryLibrary(songs);
+    output.textContent = report.albums.slice(0, 20).map(a => `${a.artist} — ${a.album} (${a.tracks.length} saved tracks)`).join('\n') + (report.albums.length > 20 ? '\n…Save the inventory to browse the rest.' : '');
+    output.style.display = 'block';
+    status.textContent = `Found ${report.tracks} library tracks across ${report.artists} artists and ${report.albums.length} albums. Completion is unconfirmed.${recentWarning}`;
+    document.getElementById('recovery-save').disabled = false;
+  } catch (error) {
+    output.textContent = '';
+    output.style.display = 'none';
+    status.textContent = `Scan incomplete: ${String(error.message || error)} No partial result was saved.`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function saveListeningRecovery() {
+  if (!recoveryInventory || recoveryBusy) return;
+  recoveryBusy = true;
+  document.getElementById('recovery-save').disabled = true;
+  document.getElementById('recovery-button').disabled = true;
+  try {
+    const response = await fetch('/api/listening/inventory', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(recoveryInventory)});
+    if (!response.ok) throw new Error('Could not save the inventory. Retry without rescanning.');
+    window.location.href = '/listening';
+  } catch(error) {
+    document.getElementById('recovery-status').textContent = error.message;
+  } finally {
+    recoveryBusy = false;
+    document.getElementById('recovery-save').disabled = !recoveryInventory;
+    document.getElementById('recovery-button').disabled = false;
+  }
+}
+
+function summarizeRecoveryLibrary(songs) {
+  const albums = new Map(), seen = new Set(), artists = new Set();
+  for (const song of songs) {
+    if (!song.id || seen.has(song.id)) continue;
+    seen.add(song.id);
+    const a = song.attributes || {};
+    const artist = a.artistName || 'Unknown Artist';
+    const album = a.albumName || 'Unknown Album';
+    const key = JSON.stringify([artist, album]);
+    artists.add(artist);
+    if (!albums.has(key)) albums.set(key, {artist, album, completion:'unknown', tracks:[]});
+    albums.get(key).tracks.push({library_id:song.id, title:a.name || 'Unknown Track', disc:a.discNumber || null, track:a.trackNumber || null, completion:'unknown'});
+  }
+  const rows = [...albums.values()].sort((a,b) => a.artist.localeCompare(b.artist) || a.album.localeCompare(b.album));
+  for (const album of rows) album.tracks.sort((a,b) => (a.disc || 0)-(b.disc || 0) || (a.track || 0)-(b.track || 0) || a.title.localeCompare(b.title));
+  return {tracks:seen.size, artists:artists.size, albums:rows};
+}
+
 async function fetchAllLibraryPages(path, music) {
   if (!music.musicUserToken) throw new Error('Connect your Apple Music account first.');
   const rows = [], visited = new Set();
   while (path) {
-    if (!path.startsWith('/v1/me/library/') || visited.has(path)) throw new Error('Invalid library pagination response. Please retry the preview.');
+    if (!(path.startsWith('/v1/me/library/') || path.startsWith('/v1/me/recent/played/tracks?')) || visited.has(path)) throw new Error('Invalid library pagination response. Please retry the preview.');
     visited.add(path);
     const token = developerToken && Date.now() - developerTokenAt < 50 * 60 * 1000 ? developerToken : await generateToken(false);
     if (!token) throw new Error('Could not authorize the library request.');
